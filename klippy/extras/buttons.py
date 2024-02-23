@@ -10,7 +10,7 @@ import logging
 # Button state tracking
 ######################################################################
 
-QUERY_TIME = .002
+QUERY_TIME = .0002
 RETRANSMIT_COUNT = 50
 
 class MCU_buttons:
@@ -86,9 +86,9 @@ class MCU_buttons:
 # ADC button tracking
 ######################################################################
 
-ADC_REPORT_TIME = 0.015
+ADC_REPORT_TIME = 0.0015
 ADC_DEBOUNCE_TIME = 0.025
-ADC_SAMPLE_TIME = 0.001
+ADC_SAMPLE_TIME = 0.0001
 ADC_SAMPLE_COUNT = 6
 
 class MCU_ADC_buttons:
