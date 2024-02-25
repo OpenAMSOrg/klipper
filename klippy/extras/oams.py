@@ -4,6 +4,8 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
+
+from statemachine import StateMachine, State
 from .pulse_counter import FrequencyCounter
 import logging
 
@@ -27,8 +29,145 @@ BLDC_REVERSE = 0
 BLDC_PWM_VALUE = 0
 BLDC_CYCLE_TIME = 0.00002
 
+# TODO: automatically compute the number of clicks
 
-from statemachine import StateMachine, State
+
+class BLDCCommandQueue(StateMachine):
+    stopped = State('Stopped', initial=True)
+    running_forward = State('Forward')
+    running_backward = State('Backward')
+    coasting = State('Coasting')
+    overloaded = State('Overloaded')
+    
+    cs_stop = (
+        running_forward.to(stopped) |
+        running_backward.to(stopped) |
+        coasting.to(stopped) |
+        stopped.to(stopped) |
+        overloaded.to(overloaded)
+    )
+    
+    cs_run_forward = (
+        running_forward.to(running_forward) |
+        stopped.to(running_forward) |
+        coasting.to(running_forward)
+    )
+    
+    cs_run_backward = (
+        running_backward.to(running_backward) |
+        stopped.to(running_backward) |
+        coasting.to(running_backward)
+    )
+    
+    cs_overload = (
+        running_forward.to(overloaded) |
+        running_backward.to(overloaded) |
+        overloaded.to(overloaded)
+    )
+    
+    cs_coast = (
+        running_forward.to(coasting) |
+        running_backward.to(coasting) |
+        stopped.to(coasting) |
+        coasting.to(coasting)
+    )
+    
+    class BLDCCommand:
+        def __init__(self, motor_action, callback):
+            self.motor_action = motor_action
+            self.callback = callback
+    
+    def __init__(self, config) -> None:
+        # set up bldc motor
+        bldc_pwm_pin_name = config.get('bldc_pwm_pin')
+        bldc_en_pin_name = config.get('bldc_en_pin')
+        bldc_dir_pin_name = config.get('bldc_dir_pin')
+        bldc_reset_pin_name = config.get('bldc_reset_pin')
+
+        self.bldc_nreset_pin = PrinterOutputPin(config, bldc_reset_pin_name, False, False, False)
+        self.bldc_en_pin = PrinterOutputPin(config, bldc_en_pin_name, False, False, False)  
+        self.bldc_dir_pin = PrinterOutputPin(config, bldc_dir_pin_name, False, False, False)
+        self.bldc_pwm_pin = PrinterOutputPin(config, bldc_pwm_pin_name, True, True, cycle_time=BLDC_CYCLE_TIME, shutdown_value=1.0)
+        
+        self.queue = []
+        self.printer = config.get_printer()
+        self.reactor = self.printer.get_reactor()
+        self.timer_task = None
+        self.current_command = None
+        self.cancelled = False
+        
+        super().__init__()
+        
+    def enqueue(self, motor_action, callback = None):
+        command = self.BLDCCommand(motor_action, callback)
+        self.queue.append(command)
+        if len(self.queue) == 1:
+            self.reactor.register_async_callback(self._next)
+        
+    def _next(self, eventtime):
+        while len(self.queue) > 0:
+            self.current_command = self.queue.pop(0)
+            self.current_command.motor_action()
+            if self.current_command.callback is not None and not self.cancelled:
+                self.current_command.callback()
+            if self.cancelled:
+                break
+        self.cancelled = False
+        return eventtime + 1
+                
+    def purge_queue(self):
+        self.queue = []
+        self.cancelled = True
+                
+    def reset_motor(self):
+        self.bldc_nreset_pin.set_pin(0.0)
+        self.reactor.pause(self.reactor.monotonic() + .101)
+        self.bldc_nreset_pin.set_pin(1.0)
+        self.reactor.pause(self.reactor.monotonic() + .101)
+    
+    def run_forward(self, pwm_value):
+        pwm_value = 1 - pwm_value
+        if self.current_state.id == 'running_forward':
+            self.bldc_pwm_pin.set_pin(pwm_value, cycle_time=BLDC_CYCLE_TIME)
+            return
+        elif self.current_state.id == 'running_backward':
+            # we must stop the motor first
+            self.stop()
+        self.cs_run_forward()
+        self.reset_motor()
+        self.bldc_dir_pin.set_pin(BLDC_FORWARD)
+        self.bldc_pwm_pin.set_pin(pwm_value, cycle_time=BLDC_CYCLE_TIME)
+        self.bldc_en_pin.set_pin(1.0)
+        self.reactor.pause(self.reactor.monotonic() + .101)
+    
+    def run_backward(self, pwm_value):
+        pwm_value = 1 - pwm_value
+        if self.current_state.id == 'running_backward':
+            self.bldc_pwm_pin.set_pin(pwm_value, cycle_time=BLDC_CYCLE_TIME)
+            return
+        elif self.current_state.id == 'running_forward':
+            self.stop()
+        self.cs_run_backward()
+        self.reset_motor()
+        self.bldc_dir_pin.set_pin(BLDC_REVERSE)
+        self.bldc_pwm_pin.set_pin(pwm_value, cycle_time=BLDC_CYCLE_TIME)
+        self.bldc_en_pin.set_pin(1.0)
+        self.reactor.pause(self.reactor.monotonic() + .101)
+    
+    def stop(self):
+        if self.current_state.id == 'stopped':
+            return
+        self.cs_stop()
+        self.bldc_en_pin.set_pin(0.0)
+        self.reactor.pause(self.reactor.monotonic() + .101)
+    
+    # def coast(self):
+    #     if self.current_state.id == 'coasting':
+    #         return
+    #     self.cs_coast()
+    #     self.bldc_en_pin.set_pin(1.0)
+    #     self.bldc_pwm_pin.set_pin(0.0, cycle_time=BLDC_CYCLE_TIME)
+    #     self.reactor.pause(self.reactor.monotonic() + .101)
 
 
 class OAMS(StateMachine):
@@ -114,7 +253,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                 % (self.current_state.id, 
                    self.current_spool, 
                    self.filament_pressure_sensor.last_value,
-                   self.bldc_state,
+                   self.bldc_cmd_queue.current_state.id,
                    self.f1_state,
                    self.f1s_switches[0].on,
                    self.f1s_switches[1].on,
@@ -130,7 +269,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         return {'state': self.current_state.id,
                 'current_spool': self.current_spool,
                 'filament_pressure_sensor': self.filament_pressure_sensor.last_value,
-                'bldc_state': self.bldc_state,
+                'bldc_state': self.bldc_cmd_queue.current_state.id,
                 'f1_state': self.f1_state,
                 'f1_1_switch': self.f1s_switches[0].on,
                 'f1_2_switch': self.f1s_switches[1].on,
@@ -148,7 +287,6 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.config = config
         self.current_spool = None
         self.state_trigger = None
-        self.bldc_state = "STOP"
         self.f1_state = "STOP"
         
         self.tach = BLDCTachometer(config)
@@ -160,6 +298,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         if self.board_revision == '1.1':
             dc_motor_table_forward = {0:0b00, 1:0b11, 2:0b01, 3:0b10}
             dc_motor_table_backward = {0:0b00, 1:0b10, 2:0b01, 3:0b11}
+            
         elif self.board_revision == '1.4':
             dc_motor_table_forward = {0:0b00, 1:0b01, 2:0b10, 3:0b11}
             dc_motor_table_backward = {0:0b00, 1:0b01, 2:0b10, 3:0b11}
@@ -168,9 +307,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.encoder = OAMSEncoder(self.printer, self.config, self._encoder_callback)
         hub_switch_pin_names = [x.strip() for x in config.get('hub_switch_pins').split(',')]
         
-        self.last_rewind_time = None
-        self.last_rewind_value = None
-        self.bldc_rewind_speed = None
+
         def _current_sensor_callback(read_time, read_value):
             # TODO: add overload current check
             pass
@@ -181,15 +318,15 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             
         self.current_sensor = Adc(self.printer, config,"oams:PC5", callback=_current_sensor_callback)
         
-        # this is not reliable as of yet
+        # # this is not reliable as of yet
         def _toolhead_filament_switch_callback(state):
-            #logging.info("TOOLHEAD SWITCH: state %s value %s" % (self.current_state.id, self.filament_pressure_sensor.last_value))
-            if self.current_state.id == 'loading':
-               #and self.filament_pressure_sensor.last_value > self.schmitt_trigger_upper:
-               self.bldc_stop()
-               self.f1_stop()
-               self.loading_end()
-            pass
+        #     #logging.info("TOOLHEAD SWITCH: state %s value %s" % (self.current_state.id, self.filament_pressure_sensor.last_value))
+        #     if self.current_state.id == 'loading':
+        #        #and self.filament_pressure_sensor.last_value > self.schmitt_trigger_upper:
+        #        self.bldc_stop()
+        #        self.f1_stop()
+        #        self.loading_end()
+             pass
         
         self.toolhead_filament_switch = OAMSDigitalSwitch(config, config.get('toolhead_filament_switch'),_toolhead_filament_switch_callback)
         
@@ -242,16 +379,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.m_pwm_a_pin = PrinterOutputPin(config, m_pwm_a, m_is_pwm, m_is_hardware_pwm, m_cycle_time)
         self.m_pwm_b_pin = PrinterOutputPin(config, m_pwm_b, m_is_pwm, m_is_hardware_pwm, m_cycle_time)
         
-        # set up bldc motor
-        bldc_pwm_pin_name = config.get('bldc_pwm_pin')
-        bldc_en_pin_name = config.get('bldc_en_pin')
-        bldc_dir_pin_name = config.get('bldc_dir_pin')
-        bldc_reset_pin_name = config.get('bldc_reset_pin')
-
-        self.bldc_nreset_pin = PrinterOutputPin(config, bldc_reset_pin_name, False, False, False)
-        self.bldc_en_pin = PrinterOutputPin(config, bldc_en_pin_name, False, False, False)  
-        self.bldc_dir_pin = PrinterOutputPin(config, bldc_dir_pin_name, False, False, False)
-        self.bldc_pwm_pin = PrinterOutputPin(config, bldc_pwm_pin_name, True, True, cycle_time=1/20000.0, shutdown_value=1.0)
+        self.bldc_cmd_queue = BLDCCommandQueue(config)
 
         # set up filament pressure sensor
         self.filament_pressure_sensor = FilamentPressureSensor(config, callback=self.filament_pressure_sensor_callback)
@@ -268,8 +396,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command("LOAD_SPOOL", self.cmd_LOAD_SPOOL,
                                 desc=self.cmd_LOAD_SPOOL_help)
-        gcode.register_command("LOAD_STOP", self.cmd_LOAD_STOP,
-                               desc=self.cmd_LOAD_STOP_help)
+        # gcode.register_command("LOAD_STOP", self.cmd_LOAD_STOP,
+        #                        desc=self.cmd_LOAD_STOP_help)
         gcode.register_command("UNLOAD_SPOOL", self.cmd_UNLOAD_SPOOL)
         gcode.register_command("LOAD_STATS", self.cmd_LOAD_STATS,)
         gcode.register_command("LOAD_CLICKS", self.cmd_LOAD_CLICKS,)
@@ -332,85 +460,6 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.retract()
         #logging.info("OAMS_Event: Retract, state %s" % self.current_state.id)
 
-        
-    def bldc_stop(self):
-        if self.bldc_state == "STOP":
-            return
-        self.bldc_state = "STOP"
-        self.bldc_en_pin.set_pin(0.0) # BRK on
-        self.bldc_pwm_pin.set_pin(1.0, cycle_time=BLDC_CYCLE_TIME) # will stop the motor this is a reset effectively
-        # self.bldc_pwm_pin.set_pin(0.0, cycle_time=BLDC_CYCLE_TIME)
-        # self.bldc_pwm_pin.set_pin(1.0, cycle_time=BLDC_CYCLE_TIME)
-        self.bldc_nreset_pin.set_pin(0.0)
-        self.bldc_dir_pin.set_pin(BLDC_REVERSE)
-        self.bldc_dir_pin.set_pin(BLDC_FORWARD)
-        #self.bldc_en_pin.set_pin(1.0) # BRK off
-        #self.bldc_en_pin.set_pin(0.0) # BRK on
-        
-    def bldc_coast(self):
-        self.bldc_en_pin.set_pin(1.0) # BRK off (active low)
-        reactor = self.printer.get_reactor()
-        reactor.pause(reactor.monotonic() + 0.101)
-    
-    
-    # the callback is a function that runs when the motor
-    # is confirmed to have turned on
-    def bldc_run(self, value, forward=True, reset=False, callback=None):
-        logging.info("bldc run %s" % value)
-        pwm_value = 1.0 - value
-        rpm = self.tach.get_rpm()
-        logging.info("rpm: %s" % rpm) 
-        if forward:
-            self.bldc_dir_pin.set_pin(BLDC_FORWARD)
-            self.bldc_state = "RUN_FORWARD"
-        else:
-            self.bldc_dir_pin.set_pin(BLDC_REVERSE)
-            self.bldc_state = "RUN_BACKWARD"
-        if reset:
-            self.bldc_nreset_pin.set_pin(0.0)
-            reactor = self.printer.get_reactor()
-            
-            task_timer = None
-            def _future_task(eventtime):
-                self.bldc_nreset_pin.set_pin(1.0)
-                self.bldc_pwm_pin.set_pin(pwm_value, cycle_time=BLDC_CYCLE_TIME)
-                self.bldc_en_pin.set_pin(1.0) # BRK off
-                inner_task_timer = None
-                
-                def __future_task(eventtime):
-                    # here we wait another 0.1 then make sure the motor is running
-                    # if the motor is not running do not unregister the task
-                    if self.tach.get_rpm() > 0:
-                        reactor.unregister_timer(task_timer)
-                        if callback is not None:
-                            callback(eventtime + 1)
-                    else:
-                        self.bldc_nreset_pin.set_pin(0.0)
-                    reactor.unregister_timer(inner_task_timer)
-                    return eventtime + 1
-                inner_task_timer = reactor.register_timer(__future_task, reactor.monotonic() + 0.101)
-                return eventtime + 1
-            task_timer = reactor.register_timer(_future_task, reactor.monotonic() + 0.3)
-            
-            
-            # # create a loop to reset and run the motor
-            # def __future_task(eventtime):
-            #     self.bldc_nreset_pin.set_pin(1.0)
-            #     reactor.unregister_timer(task_timer)
-            #     another_task_timer = None
-            #     def ___future_task(eventtime):
-            #         logging.info("setting the value to %s" % pwm_value)
-            #         self.bldc_pwm_pin.set_pin(pwm_value, cycle_time=BLDC_CYCLE_TIME)
-            #         self.bldc_en_pin.set_pin(1.0)
-            #         reactor.unregister_timer(another_task_timer)
-            #         return eventtime + 1
-            #     another_task_timer = reactor.register_timer(___future_task, reactor.monotonic() + 0.301)
-            #     return eventtime + 1
-            # task_timer = reactor.register_timer(__future_task, reactor.monotonic() + 0.301) # 0.301 second of a delay
-        else:
-            self.bldc_pwm_pin.set_pin(pwm_value, cycle_time=BLDC_CYCLE_TIME)
-            self.bldc_en_pin.set_pin(1.0)
-
 
     
     def f1_enable(self, spool_idx, forward=True):
@@ -454,10 +503,12 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         logging.info("number of clicks %s" % clicks)
         if self.current_state.id == 'loading' and clicks > self.load_slow_clicks + 50:
             logging.info("loading entry speed by encoder callback")
-            self.bldc_run(self.bldc_entry_pwm, reset=False)
+            #self.bldc_run(self.bldc_entry_pwm, reset=False)
+            self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_forward(self.bldc_entry_pwm), None)
         elif self.current_state.id == 'loading' and clicks > self.load_slow_clicks:
             logging.info("loading slowdown by encoder callback")
-            self.bldc_run(self.bldc_slow_pwm, reset=False)
+            #self.bldc_run(self.bldc_slow_pwm, reset=False)
+            self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_forward(self.bldc_slow_pwm), None)
     
 
     CHANGE_FILAMENT_TRIGGER_SPEED = 0.45
@@ -470,24 +521,23 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         if self.current_state.id == 'loading' and read_value > self.schmitt_trigger_upper:
             logging.info("OAMS: loading end by filament pressure sensor")
             self.loading_end()
-            self.bldc_stop()
-            self.f1_stop()
-        elif self.current_state.id == 'loaded_fw' and read_value < self.schmitt_trigger_lower and self.bldc_state == "STOP":
-            #logging.info("running forward")
-            self.bldc_run(self.PRINTING_TRIGGER_SPEED, forward=True, reset=True)
-        elif self.current_state.id == 'loaded_fw' and read_value > self.schmitt_trigger_upper and self.bldc_state == "RUN_FORWARD":
-            #logging.info("stopping")
-            self.bldc_stop()
-        elif self.current_state.id == 'loaded_bw' and read_value < self.schmitt_trigger_reverse and self.bldc_state == "RUN_BACKWARD":
-            #logging.info("stopping")
-            self.bldc_stop()
-        elif self.current_state.id == 'loaded_bw' and read_value > self.schmitt_trigger_reverse and self.bldc_state == "STOP":
+            self.bldc_cmd_queue.enqueue(self.bldc_cmd_queue.stop, None)
+        elif self.current_state.id == 'loaded_fw' and read_value < self.schmitt_trigger_lower:
+            logging.info("OAMS: running forward")
+            def _run_forward():
+                self.bldc_cmd_queue.run_forward(self.PRINTING_TRIGGER_SPEED)
+            self.bldc_cmd_queue.enqueue(_run_forward, None)
+        elif self.current_state.id == 'loaded_fw' and read_value > self.schmitt_trigger_upper:
+            logging.info("OAMS: stopping")
+            self.bldc_cmd_queue.enqueue(self.bldc_cmd_queue.stop, None)
+        elif self.current_state.id == 'loaded_bw' and read_value < self.schmitt_trigger_reverse:
+            logging.info("OAMS: stopping")
+            self.bldc_cmd_queue.enqueue(self.bldc_cmd_queue.stop, None)
+        elif self.current_state.id == 'loaded_bw' and read_value > self.schmitt_trigger_reverse:
             logging.info("OAMS: running backward")
-            # first reverse the f1 stage dc motor
-            #self.f1_enable(self.current_spool, forward=False)
-            #logging.info("OAMS: end of running backward")
-            self.bldc_run(self.CHANGE_FILAMENT_TRIGGER_SPEED, forward=False, reset=True)
-            #self.f1_stop()
+            def _run_backward():
+                self.bldc_cmd_queue.run_backward(self.PRINTING_TRIGGER_SPEED)
+            self.bldc_cmd_queue.enqueue(_run_backward, None)
             
     # TODO: implement a timeout while waiting and a way
     #       to handle errors within the AMS to set the status so they are recoverable
@@ -523,20 +573,19 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.current_spool = spool_idx
         
         self.load_spool()
-        def _f1_enable_callback(eventtime):
-            self.f1_enable(spool_idx, forward=True)
-            return eventtime + 1
-        self.bldc_run(1.0, reset=True, callback=_f1_enable_callback)
+        def _f1_enable():
+            self.f1_enable(spool_idx)
+        self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_forward(1.0), _f1_enable)
         self._wait_till_done(lambda: self.hard_stop or self.printer.is_shutdown() or self.current_state.id == 'loaded_fw')
 
 
-    cmd_LOAD_STOP_help = "Stop a spool of filament"
-    def cmd_LOAD_STOP(self, gcmd):
-        self.hard_stop = True
-        self.f1_stop()
-        self.bldc_stop()
-        self._determine_state()
-        self.hard_stop = False
+    # cmd_LOAD_STOP_help = "Stop a spool of filament"
+    # def cmd_LOAD_STOP(self, gcmd):
+    #     self.hard_stop = True
+    #     self.f1_stop()
+    #     self.bldc_stop(caller="cmd_LOAD_STOP")
+    #     self._determine_state()
+    #     self.hard_stop = False
 
 
     cmd_UNLOAD_SPOOL_help = "Unload currently loaded spool"
@@ -559,14 +608,11 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         
         # run bldc motor
         self.unload_spool()
-        self.bldc_rewind_speed = 0.75
+        self.bldc_rewind_speed = 0.60
         self.encoder.reset_clicks()
-        def _f1_enable_callback(eventtime):
+        def _f1_enable():
             self.f1_enable(spool_idx, forward=False)
-            return eventtime + 1
-        self.bldc_run(0.5, forward=False, reset=True, callback=_f1_enable_callback)
-        # reactor = self.printer.get_reactor()
-        # reactor.pause(reactor.monotonic() + 0.101)
+        self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_backward(self.bldc_rewind_speed), _f1_enable)
         self._wait_till_done(lambda: self.hard_stop  or self.printer.is_shutdown() or self.current_state.id == 'unloaded')
         
         # once done we want to momentarily forward the f1 motor to make sure the gearbox is in neutral
@@ -606,10 +652,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             def __future_task(eventtime):
                 self.unloading_end()
                 self.f1_stop()
-                self.bldc_stop()
-                self.last_rewind_time = None
-                self.last_rewind_value = None
-                self.bldc_rewind_speed = None
+                self.bldc_cmd_queue.enqueue(self.bldc_cmd_queue.stop, None)
                 reactor.unregister_timer(task_timer)
                 return eventtime + 1
             task_timer = reactor.register_timer(__future_task, reactor.monotonic() + 0.2) # 0.2 second of a delay
