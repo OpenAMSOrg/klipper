@@ -4,6 +4,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
+# TODO: add small ramp up time to the BLDC motor to avoid empty spools from lifting
 # TODO: add error handling, pausing and resuming of the OAMS
 # TODO: read current sensor and implement overload error
 # TODO: implement additional logic if a filament toolhead sensor is available
@@ -427,7 +428,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.bldc_cmd_queue = BLDCCommandQueue(config)
 
         # set up filament pressure sensor
-        self.reverse_adc_value = config.getboolean('reverse_adc_value')
+        self.reverse_adc_value = config.getboolean('reverse_adc_value', False)
         self.filament_pressure_sensor = FilamentPressureSensor(config, callback=self.filament_pressure_sensor_callback, reverse=self.reverse_adc_value)
         self.schmitt_trigger_upper = config.getfloat('pressure_sensor_bldc_schmitt_trigger_upper', 0.7)
         self.schmitt_trigger_lower = config.getfloat('pressure_sensor_bldc_schmitt_trigger_lower', 0.3)
