@@ -427,7 +427,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.bldc_cmd_queue = BLDCCommandQueue(config)
 
         # set up filament pressure sensor
-        self.filament_pressure_sensor = FilamentPressureSensor(config, callback=self.filament_pressure_sensor_callback)
+        self.reverse_adc_value = config.getboolean('reverse_adc_value')
+        self.filament_pressure_sensor = FilamentPressureSensor(config, callback=self.filament_pressure_sensor_callback, reverse=self.reverse_adc_value)
         self.schmitt_trigger_upper = config.getfloat('pressure_sensor_bldc_schmitt_trigger_upper', 0.7)
         self.schmitt_trigger_lower = config.getfloat('pressure_sensor_bldc_schmitt_trigger_lower', 0.3)
         
@@ -436,8 +437,6 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         # schmitt_trigger_lower, it is recommended that it is set below the schmitt_trigger_lower
         # this will make sure the slide mostly unloaded
         self.schmitt_trigger_reverse = config.getfloat('pressure_sensor_bldc_schmitt_trigger_reverse_lower', 0.2)
-
-        self.reverse_adc_value = config.getboolean('reverse_adc_value', False)
         
         if self.schmitt_trigger_upper < self.schmitt_trigger_lower:
             raise config.error("Schmitt trigger upper must be greater than lower")
@@ -771,9 +770,6 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
     
     PRINTING_TRIGGER_SPEED = 0.45
     def filament_pressure_sensor_callback(self, read_time, read_value):
-
-        if self.reverse_adc_value:
-            read_value = 1.0 - read_value
         
         logging.debug("OAMS: Filament Pressure Sensor: %s, state: %s, u: %s, l: %s" % (read_value, self.current_state.id, self.schmitt_trigger_upper, self.schmitt_trigger_lower))
         if self.current_state.id == 'loading' and read_value > self.schmitt_trigger_upper and abs(self.encoder.get_clicks()) > self.load_slow_clicks:
@@ -1085,8 +1081,9 @@ class BLDCTachometer:
         return {'rpm': rpm}
     
 class FilamentPressureSensor:
-    def __init__(self, config, callback=None):
+    def __init__(self, config, callback=None, reverse = False):
         self.callback = callback
+        self.reverse = reverse
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
         self._pin = config.get('pressure_sensor_pin')
@@ -1120,6 +1117,8 @@ class FilamentPressureSensor:
         return eventtime + 1
 
     def _adc_callback(self, read_time, read_value):
+        if self.reverse:
+            read_value = 1.0 - read_value
         self.last_value = read_value
         if self.callback is not None:
             self.callback(read_time, read_value)
