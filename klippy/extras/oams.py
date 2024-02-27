@@ -4,7 +4,6 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-# TODO: add small ramp up time to the BLDC motor to avoid empty spools from lifting
 # TODO: add error handling, pausing and resuming of the OAMS
 # TODO: read current sensor and implement overload error
 # TODO: implement additional logic if a filament toolhead sensor is available
@@ -613,7 +612,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
     cmd_LOAD_SPOOL_help = "Load a spool of filament"
     def cmd_OAMS_LOAD_SPOOL(self, gcmd):
         self.error_state = None
-        self._load_spool(gcmd, 1.0)
+        self._load_spool(gcmd, 0.6)
     
     def _unload_spool(self, gcmd):
         self.retract()
@@ -816,6 +815,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             def _turn_off_f1_motor(eventtime):
                 logging.debug("OAMS: stopping f1 stage dc motor")
                 self.f1_stop()
+                # change the speed of the bldc motor to full speed now that it is loaded
+                self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_forward(1.0), None)
                 reactor.unregister_timer(turn_off_motor_timer)
                 return eventtime + 1
             turn_off_motor_timer = reactor.register_timer(_turn_off_f1_motor, reactor.monotonic() + 2.0) # 2 second of a delay
