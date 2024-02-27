@@ -436,6 +436,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         # schmitt_trigger_lower, it is recommended that it is set below the schmitt_trigger_lower
         # this will make sure the slide mostly unloaded
         self.schmitt_trigger_reverse = config.getfloat('pressure_sensor_bldc_schmitt_trigger_reverse_lower', 0.2)
+
+        self.reverse_adc_value = config.getboolean('reverse_adc_value', False)
         
         if self.schmitt_trigger_upper < self.schmitt_trigger_lower:
             raise config.error("Schmitt trigger upper must be greater than lower")
@@ -769,6 +771,9 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
     
     PRINTING_TRIGGER_SPEED = 0.45
     def filament_pressure_sensor_callback(self, read_time, read_value):
+
+        if self.reverse_adc_value:
+            read_value = 1.0 - read_value
         
         logging.debug("OAMS: Filament Pressure Sensor: %s, state: %s, u: %s, l: %s" % (read_value, self.current_state.id, self.schmitt_trigger_upper, self.schmitt_trigger_lower))
         if self.current_state.id == 'loading' and read_value > self.schmitt_trigger_upper and abs(self.encoder.get_clicks()) > self.load_slow_clicks:
