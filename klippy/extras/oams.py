@@ -637,21 +637,21 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_backward(self.bldc_rewind_speed), _f1_enable)
         self._wait_till_done(lambda: self.hard_stop  or self.printer.is_shutdown() or self.current_state.id == 'unloaded')
         
-        # once done we want to momentarily forward the f1 motor to make sure the gearbox is in neutral
-        self.f1_enable(spool_idx, forward=True)
-        # schedule a timer to stop the motor 0.2s
-        reactor = self.printer.get_reactor()
-        turn_off_motor_timer = None
-        self.f1_done = False
-        def _turn_off_f1_motor(eventtime):
-            logging.debug("OAMS: stopping f1 stage dc motor")
-            self.f1_stop()
-            reactor.unregister_timer(turn_off_motor_timer)
-            self.f1_done = True
-            return eventtime + 1
-        turn_off_motor_timer = reactor.register_timer(_turn_off_f1_motor, reactor.monotonic() + 0.1) # 0.1 second of a delay
-        # have to wait
-        self._wait_till_done(lambda: self.hard_stop  or self.printer.is_shutdown() or self.f1_done)
+        # # once done we want to momentarily forward the f1 motor to make sure the gearbox is in neutral
+        # self.f1_enable(spool_idx, forward=True)
+        # # schedule a timer to stop the motor 0.2s
+        # reactor = self.printer.get_reactor()
+        # turn_off_motor_timer = None
+        # self.f1_done = False
+        # def _turn_off_f1_motor(eventtime):
+        #     logging.debug("OAMS: stopping f1 stage dc motor")
+        #     self.f1_stop()
+        #     reactor.unregister_timer(turn_off_motor_timer)
+        #     self.f1_done = True
+        #     return eventtime + 1
+        # turn_off_motor_timer = reactor.register_timer(_turn_off_f1_motor, reactor.monotonic() + 0.1) # 0.1 second of a delay
+        # # have to wait
+        # self._wait_till_done(lambda: self.hard_stop  or self.printer.is_shutdown() or self.f1_done)
         return None
         
     cmd_UNLOAD_SPOOL_help = "Unload currently loaded spool"
