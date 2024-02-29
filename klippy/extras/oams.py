@@ -255,7 +255,8 @@ class OAMS(StateMachine):
         loading.to(loaded_fw)
     )
     unloading_end = (
-        unloading.to(unloaded)
+        unloading.to(unloaded) |
+        unloaded.to(unloaded)
     )
     retract = (
         loaded_fw.to(loaded_bw) |
