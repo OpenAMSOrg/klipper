@@ -11,6 +11,8 @@
 # TODO: implement change over of spool in filament runout
 # TODO: tune and determine the sample count time for encoder
 
+# from gevent import monkey
+# monkey.patch_all()
 
 import sqlite3
 import time
@@ -394,6 +396,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.state_trigger = None
         self.f1_state = "STOP"
         self.error_state = None
+        self.calibrating = False
         
         # create database if not exists
         self.database_name = config.get('oams_database_name', "oams.db")
@@ -437,7 +440,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             AdcHesSwitch(self.printer, config,
                          x,idx,
                          config.get('hub_on_value_type'),
-                         config.get('hub_on_value'),
+                         float(config.get('hub_on_value').split(",")[idx]),
                          callback=self.state_change_hub_switch_callback,
                          log_info=False,
                          db_name=self.database_name) 
@@ -514,10 +517,11 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         gcode.register_command("OAMS_LOADED", self.cmd_OAMS_LOADED,)
         gcode.register_command("OAMS_CHANGE_FILAMENT", self.cmd_OAMS_CHANGE_FILAMENT)
         gcode.register_command("OAMS_CALIBRATE_CLICKS", self.cmd_OAMS_CALIBRATE_CLICKS)
+        gcode.register_command("OAMS_CALIBRATE_HUB_HES", self.cmd_OAMS_CALIBRATE_HUB_HES)
         
         # these events are given here as a place holder in case some
         # initialization is needed during the startup of the printer for the OAMS
-        # self.printer.register_event_handler("klippy:ready", self.handle_ready)
+        self.printer.register_event_handler("klippy:ready", self.handle_ready)
         # self.printer.register_event_handler("idle_timeout:ready", self.handle_ready)
         # self.printer.register_event_handler("idle_timeout:idle", self.handle_ready)
         
@@ -644,12 +648,70 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         gcmd = self.printer.lookup_object('gcode')
         gcmd.respond_error("OAMS: Error %s" % error)
         self.hard_stop = True # this will make the OAMS get out of M400
+
+    def handle_ready(self):
+        self._determine_state()
         
     # GCODE commands for the OAMS, all commands are prefixed by OAMS_
         
     cmd_LOAD_STATS_help = "Query load statistics"
     def cmd_OAMS_LOAD_STATS(self, gcmd):
         gcmd.respond_info("Load statistics: %s %s %s" % (self.current_state.id, self.current_spool, self.hard_stop))
+
+    def cmd_OAMS_CALIBRATE_HUB_HES(self,gcmd):
+        ams_idx = gcmd.get_int('AMS', 0, minval=0, maxval=3)
+        spool_idx = gcmd.get_int('SPOOL', 0, minval=0, maxval=3)
+        oams_name = gcmd.get("OAMS_NAME", None)
+
+        if ams_idx is None  or spool_idx is None:
+            raise gcmd.error("Missing AMS or SPOOL parameter")
+        if self.current_spool == spool_idx:
+            raise gcmd.error("Spool %s is already loaded" % spool_idx)
+        if not self.f1s_switches[spool_idx].on:
+            raise gcmd.error("Spool %s is not inserted, please make sure the filament is inserted into the feeder" % spool_idx)
+        if oams_name is None:
+            raise gcmd.error("Missing OAMS_NAME parameter, usually this is oams1, oams2, etc...")
+        
+        reactor = self.printer.get_reactor()
+
+        self.hub_switches[spool_idx].calibrated = False
+        self.hub_switches[spool_idx].low_calibration = []
+        self.hub_switches[spool_idx].high_calibration = []
+
+        for i in range(3):
+            starting_adc_value = self.hub_switches[spool_idx].adc_value
+            self.hub_switches[spool_idx].high_calibration.append(starting_adc_value)
+            self.f1_enable(spool_idx, forward=True, speed=0.5)
+            hysteresis = 0.075
+            while(abs(self.hub_switches[spool_idx].adc_value - starting_adc_value) < hysteresis):
+                reactor.pause(reactor.monotonic() + 0.01)
+            self.f1_stop()
+            reactor.pause(reactor.monotonic() + 0.5)
+            starting_adc_value = self.hub_switches[spool_idx].adc_value
+            self.hub_switches[spool_idx].low_calibration.append(starting_adc_value)
+            self.f1_enable(spool_idx, forward=False, speed=0.5)
+            while(abs(self.hub_switches[spool_idx].adc_value - starting_adc_value) < hysteresis):
+                reactor.pause(reactor.monotonic() + 0.01)
+            self.f1_stop()
+            reactor.pause(reactor.monotonic() + 0.5)
+        average_low = sum(self.hub_switches[spool_idx].low_calibration) / len(self.hub_switches[spool_idx].low_calibration)
+        average_high = sum(self.hub_switches[spool_idx].high_calibration) / len(self.hub_switches[spool_idx].high_calibration)
+        self.hub_switches[spool_idx].on_value = (average_low + average_high) / 2
+        self.hub_switches[spool_idx].calibrated = True
+        hub_on_value_type = None
+        if average_low < average_high:
+            hub_on_value_type = "below"
+            self.hub_switches[spool_idx].on_value_type = "below"
+        else:
+            hub_on_value_type = "above"
+            self.hub_switches[spool_idx].on_value_type = "above"
+
+        configfile = self.printer.lookup_object('configfile')
+
+        configfile.set(oams_name, "hub_on_value", "%f,%f,%f,%f" % (self.hub_switches[0].on_value, self.hub_switches[1].on_value, self.hub_switches[2].on_value, self.hub_switches[3].on_value))
+        configfile.set(oams_name, "hub_on_value_type", hub_on_value_type)
+
+        gcmd.respond_info("OAMS: Hub switch %s calibrated, switch will be on %s the value %s" % (spool_idx, self.hub_switches[spool_idx].on_value_type ,self.hub_switches[spool_idx].on_value))
         
     def _load_spool(self, gcmd, load_speed):
         ams_idx = gcmd.get_int('AMS', 0, minval=0, maxval=3)
@@ -789,7 +851,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.extrude()
         logging.debug("OAMS_Event: Extrude, state %s" % self.current_state.id)
     
-    def f1_enable(self, spool_idx, forward=True):
+    def f1_enable(self, spool_idx, forward=True, speed = 1.0):
         mux_dict = None
         if forward:
             mux_dict = self.dc_motor_table_forward
@@ -807,12 +869,12 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         reactor.pause(reactor.monotonic() + .101)
         
         if forward:
-            self.m_pwm_a_pin.set_pin(1.0)
+            self.m_pwm_a_pin.set_pin(speed)
             self.m_pwm_b_pin.set_pin(0.0)
             self.f1_state = "RUN_FORWARD"
         else:
             self.m_pwm_a_pin.set_pin(0.0)
-            self.m_pwm_b_pin.set_pin(1.0)
+            self.m_pwm_b_pin.set_pin(speed)
             self.f1_state = "RUN_BACKWARD"
         
         #self.m_disable_pin.set_pin(0.0)
@@ -896,14 +958,10 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                 reactor.unregister_timer(task_timer)
                 return eventtime + 1
             task_timer = reactor.register_timer(__future_task, reactor.monotonic() + 0.2) # 0.2 second of a delay
-            
-        if self.current_state.id == 'unloaded':
-            self._determine_state()
     
     def state_change_f1s_switch_callback(self, idx, on, adc_value):
         self.led_white[idx].set_pin(on)
-        if self.current_state.id == 'unloaded':
-            self._determine_state()
+            
 
 class  OAMSDigitalSwitch:
     def __init__(self, config, switch_pin, callback):
@@ -1037,6 +1095,9 @@ class AdcHesSwitch:
         self.setup_minmax(0, 1)
         self.on = False
         self.adc_value = 0
+        self.calibrated = False
+        self.low_calibration = []
+        self.high_calibration = []
         self.db_name = db_name
 
     def get_report_time_delta(self):
