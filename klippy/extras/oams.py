@@ -4,11 +4,65 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
+# TODO: add small ramp up time to the BLDC motor to avoid empty spools from lifting
 # TODO: add error handling, pausing and resuming of the OAMS
 # TODO: read current sensor and implement overload error
 # TODO: implement additional logic if a filament toolhead sensor is available
 # TODO: implement change over of spool in filament runout
 # TODO: tune and determine the sample count time for encoder
+
+
+import sqlite3
+import time
+import threading
+
+def create_db(db_name):
+    """Connect to database and create schema, if it doesn't already exist, for storing calibration data."""
+    conn = sqlite3.connect(db_name)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS "hes_internal_hub" (
+	"id"	INTEGER NOT NULL,
+	"unix_timestamp"	NUMERIC NOT NULL,
+	"spool_idx"	INTEGER NOT NULL,
+	"adc_value"	REAL NOT NULL,
+	"is_on"	INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY("id" AUTOINCREMENT)
+)''')
+    c.execute('''CREATE INDEX IF NOT EXISTS "hes_internal_hub_unix_timestamp_spool_idx" ON "hes_internal_hub" (
+	"unix_timestamp"	DESC,
+	"spool_idx"
+)''')
+    conn.commit()
+    c.close()
+    conn.close()
+
+
+
+
+# def get_historical_offset(config):
+#     """Get the historical offset from the database."""
+#     conn = sqlite3.connect(config.get('database', 'database.db'))
+#     c = conn.cursor()
+#     res = c.execute('''SELECT MAX(nozzle_run_id) as last_nozzle_run_id FROM nozzle_run''',)
+#     nozzle_run_id = res.fetchone()[0]
+#     # select number of rows
+#     res = c.execute('''SELECT COUNT(*) as count FROM calibration WHERE nozzle_run_id = ?''', (nozzle_run_id,))
+#     count = res.fetchone()[0]
+#     if count < 10:
+#         return None, None
+#     samples = 10
+#     res  = c.execute('''SELECT offset FROM calibration ORDER BY nozzle_run_id DESC LIMIT ?''',(samples,))
+#     offsets = res.fetchall()
+#     avg_offset = 0
+#     proper_offsets = []
+#     for offset in offsets:
+#         avg_offset += offset[0]/samples
+#         proper_offsets.append(offset[0])
+#     stdev_offset = statistics.stdev(proper_offsets)
+#     offset_3_sigma = 3*stdev_offset
+#     c.close()
+#     conn.close()
+#     return avg_offset, offset_3_sigma
 
 
 from statemachine import StateMachine, State
@@ -255,8 +309,7 @@ class OAMS(StateMachine):
         loading.to(loaded_fw)
     )
     unloading_end = (
-        unloading.to(unloaded) |
-        unloaded.to(unloaded)
+        unloading.to(unloaded)
     )
     retract = (
         loaded_fw.to(loaded_bw) |
@@ -307,14 +360,14 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                    self.filament_pressure_sensor.last_value,
                    self.bldc_cmd_queue.current_state.id,
                    self.f1_state,
-                   self.f1s_switches[0].on,
-                   self.f1s_switches[1].on,
-                   self.f1s_switches[2].on,
-                   self.f1s_switches[3].on,
-                   self.hub_switches[0].on,
-                   self.hub_switches[1].on,
-                   self.hub_switches[2].on,
-                   self.hub_switches[3].on,
+                   "%s (%f.3)" % (self.f1s_switches[0].on, self.f1s_switches[0].adc_value),
+                   "%s (%f.3)" % (self.f1s_switches[1].on, self.f1s_switches[1].adc_value),
+                   "%s (%f.3)" % (self.f1s_switches[2].on, self.f1s_switches[2].adc_value),
+                   "%s (%f.3)" % (self.f1s_switches[3].on, self.f1s_switches[3].adc_value),
+                   "%s (%f.3)" % (self.hub_switches[0].on, self.hub_switches[0].adc_value),
+                   "%s (%f.3)" % (self.hub_switches[1].on, self.hub_switches[1].adc_value),
+                   "%s (%f.3)" % (self.hub_switches[2].on, self.hub_switches[2].adc_value),
+                   "%s (%f.3)" % (self.hub_switches[3].on, self.hub_switches[3].adc_value)
                    ))
         
     def get_status(self, eventtime):
@@ -323,14 +376,14 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                 'filament_pressure_sensor': self.filament_pressure_sensor.last_value,
                 'bldc_state': self.bldc_cmd_queue.current_state.id,
                 'f1_state': self.f1_state,
-                'f1_1_switch': self.f1s_switches[0].on,
-                'f1_2_switch': self.f1s_switches[1].on,
-                'f1_3_switch': self.f1s_switches[2].on,
-                'f1_4_switch': self.f1s_switches[3].on,
-                'hub_1_switch': self.hub_switches[0].on,
-                'hub_2_switch': self.hub_switches[1].on,
-                'hub_3_switch': self.hub_switches[2].on,
-                'hub_4_switch': self.hub_switches[3].on,
+                'f1_1_switch': "%s (%f.3)" % (self.f1s_switches[0].on, self.f1s_switches[0].adc_value),
+                'f1_2_switch': "%s (%f.3)" % (self.f1s_switches[1].on, self.f1s_switches[1].adc_value),
+                'f1_3_switch': "%s (%f.3)" % (self.f1s_switches[2].on, self.f1s_switches[2].adc_value),
+                'f1_4_switch': "%s (%f.3)" % (self.f1s_switches[3].on, self.f1s_switches[3].adc_value),
+                'hub_1_switch': "%s (%f.3)" % (self.hub_switches[0].on, self.hub_switches[0].adc_value),
+                'hub_2_switch': "%s (%f.3)" % (self.hub_switches[1].on, self.hub_switches[1].adc_value),
+                'hub_3_switch': "%s (%f.3)" % (self.hub_switches[2].on, self.hub_switches[2].adc_value),
+                'hub_4_switch': "%s (%f.3)" % (self.hub_switches[3].on, self.hub_switches[3].adc_value)
                 }
     
     def __init__(self, config) -> None:
@@ -341,6 +394,10 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.state_trigger = None
         self.f1_state = "STOP"
         self.error_state = None
+        
+        # create database if not exists
+        self.database_name = config.get('oams_database_name', "oams.db")
+        create_db(self.database_name)
         
         self.tach = BLDCTachometer(config)
 
@@ -382,7 +439,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                          config.get('hub_on_value_type'),
                          config.get('hub_on_value'),
                          callback=self.state_change_hub_switch_callback,
-                         log_info=False) 
+                         log_info=False,
+                         db_name=self.database_name) 
             for idx, x in enumerate(hub_switch_pin_names)]
         
         self.f1s_switch_pin_names = [x.strip() for x in config.get('f1s_switch_pins').split(',')]
@@ -392,7 +450,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                          config.get('f1s_on_value_type'),
                          config.get('f1s_on_value'),
                          callback=self.state_change_f1s_switch_callback,
-                         log_info=False) 
+                         log_info=False,
+                         db_name = self.database_name) 
             for idx, x in enumerate(self.f1s_switch_pin_names)]
         
         led_pwm = config.getboolean('led_pwm', False)
@@ -418,6 +477,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         m_is_pwm = config.getboolean('dc_motor_pwm', False)
         m_is_hardware_pwm = config.getboolean('dc_motor_hardware_pwm', False)
         m_cycle_time = config.getfloat('dc_motor_cycle_time', 0.100)
+        
+        self.reverse_dc_motor_on_unload = config.getboolean('reverse_dc_motor_on_unload', False)
 
         self.m_driver_select_pin = PrinterOutputPin(config, m_driver_select_pin_name, False, False, False)
         self.m_select_pin = PrinterOutputPin(config, m_select_pin_name, False, False, False)
@@ -426,8 +487,6 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.m_pwm_b_pin = PrinterOutputPin(config, m_pwm_b, m_is_pwm, m_is_hardware_pwm, m_cycle_time)
         
         self.bldc_cmd_queue = BLDCCommandQueue(config)
-        
-        self.reverse_dc_motor_on_unload = config.getboolean('reverse_dc_motor_on_unload', False)
 
         # set up filament pressure sensor
         self.reverse_adc_value = config.getboolean('reverse_adc_value', False)
@@ -639,8 +698,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             self.f1_enable(spool_idx, forward=False)
         self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_backward(self.bldc_rewind_speed), _f1_enable)
         self._wait_till_done(lambda: self.hard_stop  or self.printer.is_shutdown() or self.current_state.id == 'unloaded')
-
-        if self.reverse_dc_motor_on_unload:        
+        
+        if self.reverse_dc_motor_on_unload:
             # once done we want to momentarily forward the f1 motor to make sure the gearbox is in neutral
             self.f1_enable(spool_idx, forward=True)
             # schedule a timer to stop the motor 0.2s
@@ -811,7 +870,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             eventtime = reactor.pause(eventtime + 1.0)
             
 
-    def state_change_hub_switch_callback(self, idx, on):
+    def state_change_hub_switch_callback(self, idx, on, adc_value):
         if self.current_state.id == 'loading' and idx == self.current_spool and on:
             # we must schedule this sometime in the future so the filament reaches the bldc motor
             reactor = self.printer.get_reactor()
@@ -819,7 +878,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             def _turn_off_f1_motor(eventtime):
                 logging.debug("OAMS: stopping f1 stage dc motor")
                 self.f1_stop()
-                # change the speed of the bldc motor to full speed now that it is loaded
+                # increase the speed of the BLDC motor to full speed after it has grabbed the filament
+                # and the f1s dc motor has stopped
                 self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_forward(1.0), None)
                 reactor.unregister_timer(turn_off_motor_timer)
                 return eventtime + 1
@@ -840,7 +900,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         if self.current_state.id == 'unloaded':
             self._determine_state()
     
-    def state_change_f1s_switch_callback(self, idx, on):
+    def state_change_f1s_switch_callback(self, idx, on, adc_value):
         self.led_white[idx].set_pin(on)
         if self.current_state.id == 'unloaded':
             self._determine_state()
@@ -961,7 +1021,8 @@ class Adc:
 
 
 class AdcHesSwitch:
-    def __init__(self, printer, config, sensor_pin, idx, on_value_type, on_value, callback = None, log_info=False):
+    
+    def __init__(self, printer, config, sensor_pin, idx, on_value_type, on_value, callback = None, log_info=False, db_name=None):
         self.log_info = log_info
         self.idx = idx
         self.callback = callback
@@ -975,10 +1036,44 @@ class AdcHesSwitch:
         query_adc.register_adc(config.get_name(), self.mcu_adc)
         self.setup_minmax(0, 1)
         self.on = False
+        self.adc_value = 0
+        self.db_name = db_name
 
     def get_report_time_delta(self):
         return REPORT_TIME
+    
+
+    
     def adc_callback(self, read_time, read_value):
+        
+        def write_adc(db_name, idx, read_value):
+            """Insert data into the database."""
+            conn = sqlite3.connect(db_name)
+            unix_time = int(time.time())
+            c = conn.cursor()
+            c.execute('''INSERT INTO hes_internal_hub(unix_timestamp, spool_idx, adc_value) VALUES(?,?,?)''',
+                    (unix_time, idx, read_value))
+            conn.commit()
+            # delete old records, only keep 1000 entries per state and spool
+            # get max id#     
+            c.execute('''delete from hes_internal_hub
+                    where id not in (select id from hes_internal_hub
+                    where spool_idx = ? and is_on = 0
+                    order by unix_timestamp DESC
+                    limit 1000) 
+                    or id not in 
+                    (select id from hes_internal_hub
+                    where spool_idx = ? and is_on = 1
+                    order by unix_timestamp DESC
+                    limit 1000)''', (idx, idx))
+            c.close()
+            conn.close()
+            
+        # if self.db_name is not None:
+        #      db_thread = threading.Thread(target=write_adc, args=(self.db_name, self.idx, read_value))
+        #      db_thread.start()
+        self.adc_value = read_value
+        
         on = False
         if self.on_value_type == 'above':            
             if read_value > self.on_value:
@@ -990,7 +1085,7 @@ class AdcHesSwitch:
             self.on = on
             # change of states must call the callback
             if self.callback is not None:
-                self.callback(self.idx, on)
+                self.callback(self.idx, on, read_value)
 
         if self.log_info:
             logging.debug("OAMS: ADC HES Switch (%s): %s (%s)", self.hes_switch_name , on, read_value)
