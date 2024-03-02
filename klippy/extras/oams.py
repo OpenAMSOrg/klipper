@@ -760,6 +760,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             self.f1_enable(spool_idx, forward=False)
         self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_backward(self.bldc_rewind_speed), _f1_enable)
         self._wait_till_done(lambda: self.hard_stop  or self.printer.is_shutdown() or self.current_state.id == 'unloaded')
+        self.current_spool = None
         
         if self.reverse_dc_motor_on_unload:
             # once done we want to momentarily forward the f1 motor to make sure the gearbox is in neutral
