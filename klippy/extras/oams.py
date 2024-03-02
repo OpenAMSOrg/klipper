@@ -836,6 +836,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             self.current_spool = current_spool
             self.determined_state_loaded()
         else:
+            self.current_spool = None
             self.determine_state_unloaded()
 
     # this method is here to unload the pressure on the slide
