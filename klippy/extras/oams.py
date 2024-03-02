@@ -4,10 +4,8 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-# TODO: add small ramp up time to the BLDC motor to avoid empty spools from lifting
 # TODO: add error handling, pausing and resuming of the OAMS
 # TODO: read current sensor and implement overload error
-# TODO: implement additional logic if a filament toolhead sensor is available
 # TODO: implement change over of spool in filament runout
 # TODO: tune and determine the sample count time for encoder
 
@@ -429,12 +427,12 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             
         self.current_sensor = Adc(self.printer, config,"oams:PC5", callback=_current_sensor_callback)
         
-        # There is no use for the toolhead filament switch at the moment
-        def _toolhead_filament_switch_callback(state):
-            logging.info("OAMS: toolhead switch state change to %s value %s" % (self.current_state.id, self.filament_pressure_sensor.last_value))
-            pass
+        # # There is no use for the toolhead filament switch at the moment
+        # def _toolhead_filament_switch_callback(state):
+        #     logging.info("OAMS: toolhead switch state change to %s value %s" % (self.current_state.id, self.filament_pressure_sensor.last_value))
+        #     pass
         
-        self.toolhead_filament_switch = OAMSDigitalSwitch(config, config.get('toolhead_filament_switch'),_toolhead_filament_switch_callback)
+        # self.toolhead_filament_switch = OAMSDigitalSwitch(config, config.get('toolhead_filament_switch'),_toolhead_filament_switch_callback)
         
         self.hub_switches = [
             AdcHesSwitch(self.printer, config,
