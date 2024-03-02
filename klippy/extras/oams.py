@@ -821,6 +821,11 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
     def _determine_state(self):
         # determine the state of the system LOADED or UNLOADED
         current_spool = None
+        reactor = self.printer.get_reactor()
+        for idx in range(0, len(self.hub_switches)):
+            while(not self.hub_switches[idx].ready):
+                reactor.pause(reactor.monotonic() + 0.1)
+
         for idx in range(0, len(self.hub_switches)):
             if self.hub_switches[idx].on and self.f1s_switches[idx].on:
                 if current_spool == None:
@@ -1099,11 +1104,10 @@ class AdcHesSwitch:
         self.low_calibration = []
         self.high_calibration = []
         self.db_name = db_name
+        self.ready = False
 
     def get_report_time_delta(self):
         return REPORT_TIME
-    
-
     
     def adc_callback(self, read_time, read_value):
         
@@ -1134,6 +1138,7 @@ class AdcHesSwitch:
         #      db_thread = threading.Thread(target=write_adc, args=(self.db_name, self.idx, read_value))
         #      db_thread.start()
         self.adc_value = read_value
+        self.ready = True
         
         on = False
         if self.on_value_type == 'above':            
