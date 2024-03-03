@@ -892,6 +892,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         for idx in range(0, len(self.hub_switches)):
             while(not self.hub_switches[idx].ready):
                 reactor.pause(reactor.monotonic() + 0.1)
+            while(not self.f1s_switches[idx].ready):
+                reactor.pause(reactor.monotonic() + 0.1)
 
         for idx in range(0, len(self.hub_switches)):
             if self.hub_switches[idx].on and self.f1s_switches[idx].on:
