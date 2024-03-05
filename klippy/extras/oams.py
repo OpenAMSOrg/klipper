@@ -34,6 +34,14 @@ def create_db(db_name):
 	"unix_timestamp"	DESC,
 	"spool_idx"
 )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS "spool_status" (
+	"spool_idx"	INTEGER NOT NULL,
+	"unix_timestamp"	NUMERIC NOT NULL,
+	"start_percentage"	REAL NOT NULL DEFAULT 100.0,
+	"clicks"	INTEGER NOT NULL DEFAULT 0,
+    "type" TEXT NOT NULL DEFAULT "ABS",
+	PRIMARY KEY("spool_idx")
+)''')
     conn.commit()
     c.close()
     conn.close()
@@ -89,7 +97,7 @@ BLDC_REVERSE = 0
 BLDC_PWM_VALUE = 0
 BLDC_CYCLE_TIME = 0.00002
     
-MIN_RESET_COUNT = 6
+MIN_RESET_COUNT = 10
 
 class BLDCCommandQueue(StateMachine):
 
@@ -299,6 +307,45 @@ class OAMSMonitor():
         for condition in self.conditions:
             condition.start()
 
+class OAMSSpool():
+    def __init__(self) -> None:
+        self.start_percentage = 100.0
+        self.type = "ABS"
+        
+    def get_percentage(self):
+        spool_length = None
+        if self.type == "ABS":
+            spool_length = 380 # given in meters
+        elif self.type == "PLA":
+            spool_length = 330 # given in meters
+        
+        if spool_length is not None:
+            return max(self.start_percentage - (2*self.clicks / (330 * 1000))*100,0) # 2 clicks per mm of filament, 330 meters of filament in one spool
+        else:
+            return None
+        
+    def get_unload_delay(self):
+        upper_range = 0.5
+        lower_range = 0.2
+        percentage = self.get_percentage()
+        if percentage is None:
+            return (lower_range + upper_range) / 2
+        return lower_range + (lower_range - upper_range) * (1 - (percentage / 100))
+        
+    def set_clicks(self, clicks):
+        self.clicks = clicks
+        
+    def get_unload_speed(self):
+        lower_range = 0.40 #0.45467032967033 # lowest speed for BLDC motor
+        m =  0.17 #0.1835164835
+        upper_range = lower_range + m
+        
+        percentage = self.get_percentage()
+        if percentage is None:
+            logging.info("OAMS: Unknown material, please set the material type, rewind speed on the f1s motor might not be correct")
+            return (lower_range + upper_range) / 2
+        speed = lower_range + m * (percentage / 100)
+        return speed
 
 
 class OAMS(StateMachine):
@@ -447,11 +494,15 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             
         self.load_slow_clicks = config.getint('load_slow_clicks', 900, minval=0)
         self.encoder = OAMSEncoder(self.printer, self.config, None)
+                
         hub_switch_pin_names = [x.strip() for x in config.get('hub_switch_pins').split(',')]
-        self.current_sensor_value = 0.0
-        
 
+        self.rewinding = False
+        self.current_sensor_values = []
+        self.current_sensor_value = 0.0
         def _current_sensor_callback(read_time, read_value):
+            if self.rewinding:
+                self.current_sensor_values.append(read_value)
             self.current_sensor_value = read_value
             
         self.current_sensor = Adc(self.printer, config,"oams:PC5", callback=_current_sensor_callback)
@@ -546,6 +597,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         gcode.register_command("OAMS_CHANGE_FILAMENT", self.cmd_OAMS_CHANGE_FILAMENT)
         gcode.register_command("OAMS_CALIBRATE_CLICKS", self.cmd_OAMS_CALIBRATE_CLICKS)
         gcode.register_command("OAMS_CALIBRATE_HUB_HES", self.cmd_OAMS_CALIBRATE_HUB_HES)
+        gcode.register_command("OAMS_SPOOL", self.cmd_OAMS_SPOOL)
         
         # these events are given here as a place holder in case some
         # initialization is needed during the startup of the printer for the OAMS
@@ -561,6 +613,27 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         
         self.printer.add_object('oams', self)
         
+        # these must be populated from the database
+        self.spools = []
+        for i in range(4):
+            conn = sqlite3.connect(self.database_name)
+            c = conn.cursor()
+            res = c.execute('''SELECT spool_idx, start_percentage, type, clicks FROM spool_status WHERE spool_idx = ?''', (i,))
+            row = res.fetchone()
+            spool = OAMSSpool()
+            if row is None:
+                unix_time = time.time()
+                c.execute('''INSERT INTO spool_status (spool_idx, start_percentage, type, unix_timestamp) VALUES (?, ?, ?, ?)''', (i, 100.0, "ABS", unix_time))
+                conn.commit()
+            else:
+                spool.start_percentage = row[1]
+                spool.type = row[2]
+                spool.set_clicks(row[3])
+            
+            self.spools.append(spool)
+            c.close()
+            conn.close()
+            
         self.bldc_run_reset = 0
         
         # errors and monitoring conditions
@@ -682,7 +755,83 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
     def handle_ready(self):
         self._determine_state()
         
+        # create a task to read the encoder value and record it to the database
+        reactor = self.printer.get_reactor()
+        def _record_clicks(eventtime):
+            logging.info("OAMS: recording clicks")
+            if self.follower_enable and self.current_spool is not None:
+                conn = sqlite3.connect(self.database_name)
+                unix_time = int(time.time())
+                c = conn.cursor()
+                clicks = self.encoder.get_clicks()
+                self.encoder.reset_clicks() # we are only reading the delta
+                type = self.spools[self.current_spool].type
+                start_percentage = self.spools[self.current_spool].start_percentage
+                c.execute('''INSERT OR REPLACE INTO spool_status(spool_idx, type, start_percentage, unix_timestamp, clicks) 
+                             VALUES(?,?,?,?,coalesce((SELECT clicks FROM spool_status WHERE spool_idx = ?),0) + ?)''',
+                        (self.current_spool, type, start_percentage, unix_time, self.current_spool, clicks))
+                conn.commit()
+                res = c.execute('''SELECT  clicks FROM spool_status WHERE spool_idx = ?''', (self.current_spool,))
+                clicks = res.fetchone()[0]
+                self.spools[self.current_spool].set_clicks(clicks)
+                c.close()
+                conn.close()
+            return eventtime + 10.0 # record every 10 seconds
+        self.record_clicks = _record_clicks
+        reactor.register_timer(_record_clicks, reactor.NOW)
+                
+        
     # GCODE commands for the OAMS, all commands are prefixed by OAMS_
+    
+    
+    def cmd_OAMS_SPOOL(self, gcmd):
+        ams = gcmd.get_int('AMS', 0, minval=0, maxval=3)
+        if ams is None:
+            raise gcmd.error("Missing AMS parameter")
+        spool = gcmd.get_int('SPOOL', 0, minval=0, maxval=3)
+        if spool is None:
+            raise gcmd.error("Missing SPOOL parameter")
+        
+        spool_type = gcmd.get('TYPE', None)
+        percentage = gcmd.get_float('PERCENTAGE', None, minval=0.0, maxval=100.0)
+        clicks = gcmd.get_int('CLICKS', None, minval=0)
+        
+        conn = sqlite3.connect(self.database_name)
+        c = conn.cursor()
+        
+        unix_time = int(time.time())
+        if spool_type is not None:
+            self.spools[spool].type = spool_type
+            c.execute('''INSERT OR REPLACE INTO spool_status(spool_idx, type, unix_timestamp) 
+                            VALUES(?,?,?)''',
+                    (spool, spool_type, unix_time))
+            
+        if percentage is not None:
+            self.spools[spool].start_percentage = percentage
+            c.execute('''INSERT OR REPLACE INTO spool_status(spool_idx, start_percentage, unix_timestamp, clicks)
+                            VALUES(?,?,?, 0)''',
+                    (spool, percentage,unix_time))
+        if clicks is not None:
+            self.spools[spool].set_clicks(clicks)
+            if percentage is None:
+                percentage = 100.0
+            c.execute('''INSERT OR REPLACE INTO spool_status(spool_idx, clicks, unix_timestamp, start_percentage) 
+                            VALUES(?,?,?,?)''',
+                    (spool, clicks, unix_time, percentage))
+        
+        res = c.execute('''SELECT start_percentage, type, clicks FROM spool_status WHERE spool_idx = ?''', (spool,))
+        row = res.fetchone()
+        self.spools[spool].type = row[1]
+        self.spools[spool].start_percentage = row[0]
+        self.spools[spool].set_clicks(row[2])
+        if row is not None:
+            gcmd.respond_info("OAMS: Spool %d (%s) %.3f%%, %d clicks" % (spool, row[1], self.spools[spool].get_percentage(), row[2]))
+        else:
+            gcmd.respond_info("OAMS: No information about spool in the database!")
+        conn.commit()
+        c.close()
+        conn.close()
+        
         
     cmd_LOAD_STATS_help = "Query load statistics"
     def cmd_OAMS_LOAD_STATS(self, gcmd):
@@ -781,6 +930,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         reactor.pause(reactor.monotonic() + 0.101)
         self.loading_end()
         self.follower_enable = True
+        self.encoder.reset_clicks()
 
     cmd_LOAD_SPOOL_help = "Load a spool of filament"
     def cmd_OAMS_LOAD_SPOOL(self, gcmd):
@@ -791,18 +941,28 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         if self.current_spool is None:
             raise gcmd.error("No spool is currently loaded")
         
+        self.rewinding = True
+        
+        unload_speed = gcmd.get_float('SPEED', None)
+        if unload_speed is None:
+            unload_speed = self.spools[self.current_spool].get_unload_speed()
+        
+        # the unload speed should be set to 0.45 + 0.20 * (the weight of the spool in grams) / 1000
+        # we must discern the weight of the filament using the current sensor
+        reactor = self.printer.get_reactor()
+        self.record_clicks(reactor.NOW) # this makes sure to flush the current clicks to the database
         self.follower_enable = False
         self.unload_spool()
         self.bldc_cmd_queue.stop()
-        reactor = self.printer.get_reactor()
         while(not self.bldc_cmd_queue.empty()):
             reactor.pause(reactor.monotonic() + 0.1)
         
         # run bldc motor
-        self.bldc_rewind_speed = 0.60
         self.encoder.reset_clicks()
         self.f1_enable(self.current_spool, forward=False)
-        self.bldc_cmd_queue.run_backward(self.bldc_rewind_speed, nowait=True)
+        delay = self.spools[self.current_spool].get_unload_delay()
+        reactor.pause(reactor.monotonic() + delay) # the f1s dc motor has some delay getting the spool to start moving because of inertia
+        self.bldc_cmd_queue.run_backward(unload_speed, nowait=True)
     
     def _start_unload_spool(self, gcmd):
         self.retract()
@@ -835,6 +995,10 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             reactor.pause(reactor.monotonic() + 0.1)
             
         self.unloading_end()
+        # dump the current sensor values
+        logging.info("OAMS: Current sensor values: %s" % self.current_sensor_values)
+        self.current_sensor_values = []
+        self.rewinding = False
         return None
         
     cmd_UNLOAD_SPOOL_help = "Start unload sequence currently loaded spool"
@@ -929,7 +1093,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.extrude()
         logging.debug("OAMS_Event: Extrude, state %s" % self.current_state.id)
     
-    def f1_enable(self, spool_idx, forward=True, speed = 1.0):
+    def f1_enable(self, spool_idx, forward=True, speed = 1.0, nowait=False):
         mux_dict = None
         if forward:
             mux_dict = self.dc_motor_table_forward
@@ -1309,6 +1473,7 @@ class FilamentPressureSensor:
     def handle_ready(self):
         self.reactor.update_timer(self.filament_sensor_timer,
                                   self.reactor.NOW)
+            
 
     def filament_sensor_timer_cb(self, eventtime):
         return eventtime + 1
