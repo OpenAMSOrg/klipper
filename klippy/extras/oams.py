@@ -802,6 +802,9 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.record_clicks = _record_clicks
         reactor.register_timer(_record_clicks, reactor.NOW)
         
+        # this makes sure the BLDC nreset is pulled high when the printer first starts
+        self.bldc_cmd_queue.reset_motor()
+        
         # monitor for BLDC motor not running
         def _monitor_bldc_motor(eventtime):
             if self.current_state.id == 'loading' or self.current_state.id == 'unloading':
