@@ -97,7 +97,7 @@ BLDC_REVERSE = 0
 BLDC_PWM_VALUE = 0
 BLDC_CYCLE_TIME = 0.00002
     
-MIN_RESET_COUNT = 10
+MIN_RESET_COUNT = 5
 
 class BLDCCommandQueue(StateMachine):
 
@@ -166,6 +166,7 @@ class BLDCCommandQueue(StateMachine):
         self.current_command = None
         self.cancelled = False
         self.bldc_reset_count = 0
+        self.pwm_value = 0.0
         
         super().__init__()
         
@@ -199,23 +200,40 @@ class BLDCCommandQueue(StateMachine):
         self.bldc_nreset_pin.set_pin(1.0)
         self.reactor.pause(self.reactor.monotonic() + .101)
         self.bldc_reset_count = 0
+        
+    def replay_action(self):
+        if self.current_state.id == 'running_forward':
+            self.run_forward(self.pwm_value, nowait=True)
+        elif self.current_state.id == 'running_backward':
+            self.run_backward(self.pwm_value, nowait=True)
+        elif self.current_state.id == 'coasting':
+            self.coast(nowait=True)
+        elif self.current_state.id == 'stopped':
+            self.stop(nowait=True)
     
     def run_forward(self, pwm_value, nowait = False):
+        self.pwm_value = pwm_value
         pwm_value = 1 - pwm_value
         if self.current_state.id == 'running_forward' and self.tach.get_rpm() > 0:
+            logging.debug("OAMS: (RUNNING_FORWARD) motor is already running and tach reads %s" % self.tach.get_rpm())
             self.bldc_pwm_pin.set_pin(pwm_value, cycle_time=BLDC_CYCLE_TIME)
+            self.bldc_reset_count = 0
             return
         elif self.current_state.id == 'running_forward' and self.tach.get_rpm() == 0:
-            # the motor is not really running, we must stop it first
-            self.stop()
+            logging.debug("OAMS: (RUNNING_FORWARD) motor is already running and tach reads 0 reset count %d", self.bldc_reset_count)
             self.bldc_reset_count += 1
             if self.bldc_reset_count >= MIN_RESET_COUNT:
+                # the motor is not really running, we must stop it first
+                logging.debug("OAMS: (RUNNING_FORWARD) motor is stalled")
+                self.stop()
                 self.reset_motor()
+            else:
+                return
         elif self.current_state.id == 'running_backward':
             # we must stop the motor first
             self.stop()
         self.cs_run_forward()
-        logging.info("OAMS: attempting to run forward")
+        logging.debug("OAMS: (RUNNING FORWARD) attempting to run forward")
         self.bldc_dir_pin.set_pin(BLDC_FORWARD)
         self.bldc_pwm_pin.set_pin(pwm_value, cycle_time=BLDC_CYCLE_TIME)
         self.bldc_en_pin.set_pin(1.0)
@@ -223,16 +241,20 @@ class BLDCCommandQueue(StateMachine):
             self.reactor.pause(self.reactor.monotonic() + .101)
     
     def run_backward(self, pwm_value, nowait = False):
+        self.pwm_value = pwm_value
         pwm_value = 1 - pwm_value
         if self.current_state.id == 'running_backward' and self.tach.get_rpm() > 0:
             self.bldc_pwm_pin.set_pin(pwm_value, cycle_time=BLDC_CYCLE_TIME)
+            self.bldc_reset_count = 0
             return
         elif self.current_state.id == 'running_backward' and self.tach.get_rpm() == 0:
-            # the motor is not really running, we must stop it first
-            self.stop()
             self.bldc_reset_count += 1
             if self.bldc_reset_count >= MIN_RESET_COUNT:
+                # the motor is not really running, we must stop it first
+                self.stop()
                 self.reset_motor()
+            else:
+                return
         elif self.current_state.id == 'running_forward':
             self.stop()
         self.cs_run_backward()
@@ -779,6 +801,13 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             return eventtime + 10.0 # record every 10 seconds
         self.record_clicks = _record_clicks
         reactor.register_timer(_record_clicks, reactor.NOW)
+        
+        # monitor for BLDC motor not running
+        def _monitor_bldc_motor(eventtime):
+            if self.current_state.id == 'loading' or self.current_state.id == 'unloading':
+                self.bldc_cmd_queue.replay_action()
+            return eventtime + 0.2
+        reactor.register_timer(_monitor_bldc_motor, reactor.NOW)
                 
         
     # GCODE commands for the OAMS, all commands are prefixed by OAMS_
