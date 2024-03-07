@@ -269,6 +269,7 @@ class BLDCCommandQueue(StateMachine):
             return
         self.cs_stop()
         self.bldc_en_pin.set_pin(0.0)
+        self.bldc_reset_count = 0
         if not nowait:
             self.reactor.pause(self.reactor.monotonic() + .101)
     
