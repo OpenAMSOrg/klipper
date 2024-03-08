@@ -600,9 +600,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         
         # during the load_bw (unloading of the slide) this is the trigger point at which the
         # OAMS will stop the BLDC motor from running, the value does nto have to be the same as the
-        # schmitt_trigger_lower, it is recommended that it is set below the schmitt_trigger_lower
-        # this will make sure the slide mostly unloaded
-        self.schmitt_trigger_reverse = config.getfloat('pressure_sensor_bldc_schmitt_trigger_reverse_lower', 0.2)
+        # schmitt_trigger_lower, it is recommended to set it to the middle of the slide range (0.5)
+        self.schmitt_trigger_reverse = config.getfloat('pressure_sensor_bldc_schmitt_trigger_reverse_lower', 0.5)
         
         if self.schmitt_trigger_upper < self.schmitt_trigger_lower:
             raise config.error("Schmitt trigger upper must be greater than lower")
