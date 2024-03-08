@@ -781,7 +781,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         # create a task to read the encoder value and record it to the database
         reactor = self.printer.get_reactor()
         def _record_clicks(eventtime):
-            logging.info("OAMS: recording clicks")
+            logging.debug("OAMS: recording clicks")
             if self.follower_enable and self.current_spool is not None and not self.calibrating:
                 conn = sqlite3.connect(self.database_name)
                 unix_time = int(time.time())
