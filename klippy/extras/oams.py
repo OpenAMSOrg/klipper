@@ -782,7 +782,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         reactor = self.printer.get_reactor()
         def _record_clicks(eventtime):
             logging.info("OAMS: recording clicks")
-            if self.follower_enable and self.current_spool is not None:
+            if self.follower_enable and self.current_spool is not None and not self.calibrating:
                 conn = sqlite3.connect(self.database_name)
                 unix_time = int(time.time())
                 c = conn.cursor()
@@ -871,6 +871,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         gcmd.respond_info("Load statistics: %s %s %s" % (self.current_state.id, self.current_spool, self.hard_stop))
 
     def cmd_OAMS_CALIBRATE_HUB_HES(self,gcmd):
+        self.calibrating = True
         ams_idx = gcmd.get_int('AMS', 0, minval=0, maxval=3)
         spool_idx = gcmd.get_int('SPOOL', 0, minval=0, maxval=3)
         oams_name = gcmd.get("OAMS_NAME", None)
@@ -924,7 +925,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         configfile.set(oams_name, "hub_on_value_type", hub_on_value_type)
 
         gcmd.respond_info("OAMS: Hub switch %s calibrated, switch will be on %s the value %s" % (spool_idx, self.hub_switches[spool_idx].on_value_type ,self.hub_switches[spool_idx].on_value))
-        
+        self.calibrating = False
+
     def _load_spool(self, gcmd, load_speed):
         ams_idx = gcmd.get_int('AMS', None, minval=0, maxval=3)
         spool_idx = gcmd.get_int('SPOOL', None, minval=0, maxval=3)
@@ -963,7 +965,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         reactor.pause(reactor.monotonic() + 0.101)
         self.loading_end()
         self.follower_enable = True
-        self.encoder.reset_clicks()
+        if not self.calibrating:
+            self.encoder.reset_clicks()
 
     cmd_LOAD_SPOOL_help = "Load a spool of filament"
     def cmd_OAMS_LOAD_SPOOL(self, gcmd):
@@ -1045,6 +1048,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         
     # AMS, SPOOL, OAMS_NAME must be specified
     def cmd_OAMS_CALIBRATE_CLICKS(self, gcmd):
+        self.calibrating = True
         oams_name = gcmd.get('OAMS_NAME', None)
         if oams_name is None:
             raise gcmd.error("Missing OAMS name, this is usually oams1, oams2, etc.")
@@ -1061,6 +1065,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         configfile = self.printer.lookup_object('configfile')
         configfile.set(oams_name, 'load_slow_clicks', "%d" % (number_of_clicks,))
         gcmd.respond_info("Done calibrating clicks, output saved to configuration")
+        self.calibrating = False
         
     def cmd_OAMS_LOADED(self, gcmd):
         self.resume_loaded()
