@@ -162,37 +162,41 @@ class BLDCCommandQueue(StateMachine):
         self.queue = []
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
-        self.timer_task = None
         self.current_command = None
-        self.cancelled = False
         self.bldc_reset_count = 0
         self.pwm_value = 0.0
+        self.locked = False
         
         super().__init__()
         
+    def lock(self):
+        self.locked = True
+        
+    def unlock(self):
+        self.locked = False
+        
     def empty(self):
         return len(self.queue) == 0
+    
+    def purge(self):
+        self.queue = []
         
     def enqueue(self, motor_action, callback = None):
+        if self.locked:
+            return
         command = self.BLDCCommand(motor_action, callback)
         self.queue.append(command)
-        if len(self.queue) == 1:
-            self.reactor.register_async_callback(self._next)
         
-    def _next(self, eventtime):
+    def command_task(self, eventtime):
         while len(self.queue) > 0:
             self.current_command = self.queue.pop(0)
             self.current_command.motor_action()
-            if self.current_command.callback is not None and not self.cancelled:
+            if self.current_command.callback is not None:
                 self.current_command.callback()
-            if self.cancelled:
-                break
-        self.cancelled = False
-        return eventtime + 1
+        return eventtime + 0.01
                 
     def purge_queue(self):
         self.queue = []
-        self.cancelled = True
                 
     def reset_motor(self):
         self.bldc_nreset_pin.set_pin(0.0)
@@ -800,10 +804,12 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                 conn.close()
             return eventtime + 10.0 # record every 10 seconds
         self.record_clicks = _record_clicks
+        
         reactor.register_timer(_record_clicks, reactor.NOW)
+        reactor.register_timer(self.bldc_cmd_queue.command_task, reactor.NOW)
         
         # this makes sure the BLDC nreset is pulled high when the printer first starts
-        self.bldc_cmd_queue.reset_motor()
+        self.bldc_cmd_queue.enqueue(self.bldc_cmd_queue.reset_motor)
         
         # monitor for BLDC motor not running
         def _monitor_bldc_motor(eventtime):
@@ -988,16 +994,20 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.record_clicks(reactor.NOW) # this makes sure to flush the current clicks to the database
         self.follower_enable = False
         self.unload_spool()
-        self.bldc_cmd_queue.stop()
+        
+        # bldc queue lock start
+        self.bldc_cmd_queue.lock()
         while(not self.bldc_cmd_queue.empty()):
             reactor.pause(reactor.monotonic() + 0.1)
-        
-        # run bldc motor
+        self.bldc_cmd_queue.stop()    
         self.encoder.reset_clicks()
         self.f1_enable(self.current_spool, forward=False)
         delay = self.spools[self.current_spool].get_unload_delay()
         reactor.pause(reactor.monotonic() + delay) # the f1s dc motor has some delay getting the spool to start moving because of inertia
         self.bldc_cmd_queue.run_backward(unload_speed, nowait=True)
+        self.bldc_cmd_queue.unlock()
+         # bldc queue lock end
+        
     
     def _start_unload_spool(self, gcmd):
         self.retract()
@@ -1016,6 +1026,12 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
 
         while(self.hub_switches[self.current_spool].on):
             reactor.pause(reactor.monotonic() + 0.01)
+        
+        # bldc queue lock start    
+        self.bldc_cmd_queue.lock()
+        while(not self.bldc_cmd_queue.empty()):
+            reactor.pause(reactor.monotonic() + 0.01)
+        
         self.bldc_cmd_queue.stop()
         reactor.pause(reactor.monotonic() + 0.4)
         self.f1_stop()
@@ -1030,6 +1046,9 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             reactor.pause(reactor.monotonic() + 0.1)
             
         self.unloading_end()
+        self.bldc_cmd_queue.unlock()
+        # bldc queue lock end
+        
         # dump the current sensor values
         logging.info("OAMS: Current sensor values: %s" % self.current_sensor_values)
         self.current_sensor_values = []
