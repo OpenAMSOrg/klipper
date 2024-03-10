@@ -814,7 +814,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         # monitor for BLDC motor not running
         def _monitor_bldc_motor(eventtime):
             if self.current_state.id == 'loading':
-                self.bldc_cmd_queue.replay_action()
+                self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.replay_action())
             elif self.current_state.id == "unloading":
                 if self.board_revision == '1.4':
                     # here we calculate the BLDC speed based on the current load
@@ -822,11 +822,11 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                     pwm = self.spools[self.current_spool].unload_lower_range + adjustment*self.spools[self.current_spool].unload_m
                     if pwm != (1 - self.bldc_cmd_queue.pwm_value):
                         logging.info("OAMS: (UNLOADING MONITOR) setting pwm to %.3f, process: %.3f" % (pwm, self.current_sensor_value))
-                        self.bldc_cmd_queue.run_backward(pwm, nowait=True)
+                        self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_backward(pwm, nowait=True))
                     else:
-                        self.bldc_cmd_queue.replay_action()
+                        self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.replay_action())
                 else:
-                    self.bldc_cmd_queue.replay_action()
+                    self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.replay_action)
             return eventtime + 0.2
         reactor.register_timer(_monitor_bldc_motor, reactor.NOW)
                 
@@ -1028,9 +1028,6 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         return
     
     def _continue_unload_spool(self, gcmd):
-        #reactor.pause(reactor.monotonic() + 0.101)
-        # TODO:add a monitor that makes sure the BLDC motor is running
-        
         if not self.fast_unload:
             self._run_first_unload_sequence(gcmd)
 
@@ -1043,7 +1040,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.bldc_cmd_queue.lock()
         while(not self.bldc_cmd_queue.empty()):
             reactor.pause(reactor.monotonic() + 0.01)
-        
+        # we must terminate the monitor for the BLDC motor not running
         self.bldc_cmd_queue.stop()
         reactor.pause(reactor.monotonic() + 0.4)
         self.f1_stop()
