@@ -338,6 +338,9 @@ class OAMSSpool():
     def __init__(self) -> None:
         self.start_percentage = 100.0
         self.type = "ABS"
+        self.unload_lower_range = 0.40 #0.45467032967033 # lowest speed for BLDC motor
+        self.unload_m = 0.17 #0.1835164835
+        self.unload_upper_range = self.unload_lower_range + self.unload_m
         
     def get_percentage(self):
         spool_length = None
@@ -363,15 +366,11 @@ class OAMSSpool():
         self.clicks = clicks
         
     def get_unload_speed(self):
-        lower_range = 0.40 #0.45467032967033 # lowest speed for BLDC motor
-        m =  0.17 #0.1835164835
-        upper_range = lower_range + m
-        
         percentage = self.get_percentage()
         if percentage is None:
             logging.info("OAMS: Unknown material, please set the material type, rewind speed on the f1s motor might not be correct")
-            return (lower_range + upper_range) / 2
-        speed = lower_range + m * (percentage / 100)
+            return (self.unload_lower_range + self.unload_upper_range) / 2
+        speed = self.unload_lower_range + self.unload_m * (percentage / 100)
         return speed
 
 
@@ -531,8 +530,9 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
             if self.rewinding:
                 self.current_sensor_values.append(read_value)
             self.current_sensor_value = read_value
-            
+        self.current_sensor_target_value = config.getfloat('current_sensor_target_value', 0.30)
         self.current_sensor = Adc(self.printer, config,"oams:PC5", callback=_current_sensor_callback)
+        self.BLDC_PID = ControlPID(-4, 0, -0.5, self.current_sensor_target_value)
         
         # # There is no use for the toolhead filament switch at the moment
         # def _toolhead_filament_switch_callback(state):
@@ -813,8 +813,20 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         
         # monitor for BLDC motor not running
         def _monitor_bldc_motor(eventtime):
-            if self.current_state.id == 'loading' or self.current_state.id == 'unloading':
+            if self.current_state.id == 'loading':
                 self.bldc_cmd_queue.replay_action()
+            elif self.current_state.id == "unloading":
+                if self.board_revision == '1.4':
+                    # here we calculate the BLDC speed based on the current load
+                    adjustment = self.BLDC_PID.current_update(eventtime, self.current_sensor_value)
+                    pwm = self.spools[self.current_spool].unload_lower_range + adjustment*self.spools[self.current_spool].unload_m
+                    if pwm != (1 - self.bldc_cmd_queue.pwm_value):
+                        logging.info("OAMS: (UNLOADING MONITOR) setting pwm to %.3f, process: %.3f" % (pwm, self.current_sensor_value))
+                        self.bldc_cmd_queue.run_backward(pwm, nowait=True)
+                    else:
+                        self.bldc_cmd_queue.replay_action()
+                else:
+                    self.bldc_cmd_queue.replay_action()
             return eventtime + 0.2
         reactor.register_timer(_monitor_bldc_motor, reactor.NOW)
                 
