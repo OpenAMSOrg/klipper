@@ -821,7 +821,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                     adjustment = self.BLDC_PID.current_update(eventtime, self.current_sensor_value)
                     pwm = self.spools[self.current_spool].unload_lower_range + adjustment*self.spools[self.current_spool].unload_m
                     if pwm != (1 - self.bldc_cmd_queue.pwm_value):
-                        logging.info("OAMS: (UNLOADING MONITOR) setting pwm to %.3f, process: %.3f" % (pwm, self.current_sensor_value))
+                        logging.debug("OAMS: (UNLOADING MONITOR) setting pwm to %.3f, process: %.3f" % (pwm, self.current_sensor_value))
                         self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_backward(pwm, nowait=True))
                     else:
                         self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.replay_action())
@@ -1059,7 +1059,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         # bldc queue lock end
         
         # dump the current sensor values
-        logging.info("OAMS: Current sensor values: %s" % self.current_sensor_values)
+        logging.debug("OAMS: Current sensor values: %s" % self.current_sensor_values)
         self.current_sensor_values = []
         self.rewinding = False
         return None
