@@ -451,7 +451,7 @@ class OAMS(StateMachine):
     
     def stats(self, eventtime):
         return (False, """
-OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs motor state: %s fs 1 switch: %s fs 2 switch: %s fs 3 switch: %s fs 4 switch: %s hub 1 switch: %s hub 2 switch: %s hub 3 switch: %s hub 4 switch: %s fast unload: %s current sensor: %.3f
+OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs motor state: %s fs 1 switch: %s fs 2 switch: %s fs 3 switch: %s fs 4 switch: %s hub 1 switch: %s hub 2 switch: %s hub 3 switch: %s hub 4 switch: %s fast unload: %s current sensor: %.3f follower enabled: %s
 
 """ 
                 % (self.current_state.id, 
@@ -468,7 +468,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                    "%s (%.3f)" % (self.hub_switches[2].on, self.hub_switches[2].adc_value),
                    "%s (%.3f)" % (self.hub_switches[3].on, self.hub_switches[3].adc_value),
                    self.fast_unload,
-                   self.current_sensor_value
+                   self.current_sensor_value,
+                   self.follower_enable
                    ))
         
     def get_status(self, eventtime):
@@ -486,7 +487,8 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                 'hub_3_switch': "%s (%f.3)" % (self.hub_switches[2].on, self.hub_switches[2].adc_value),
                 'hub_4_switch': "%s (%f.3)" % (self.hub_switches[3].on, self.hub_switches[3].adc_value),
                 'fast_unload': self.fast_unload,
-                'current_sensor' : self.current_sensor_value
+                'current_sensor' : self.current_sensor_value,
+                'follower_enabled' : self.follower_enable
                 }
     
     def __init__(self, config) -> None:
@@ -782,6 +784,9 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
 
     def handle_ready(self):
         self._determine_state()
+
+        # reset HR8833s
+        self.f1_stop()
         
         # create a task to read the encoder value and record it to the database
         reactor = self.printer.get_reactor()
