@@ -168,6 +168,12 @@ class BLDCCommandQueue(StateMachine):
         self.locked = False
         
         super().__init__()
+
+    def items(self):
+        return len(self.queue)
+
+    def locke_status(self):
+        return self.locked
         
     def lock(self):
         self.locked = True
@@ -451,7 +457,7 @@ class OAMS(StateMachine):
     
     def stats(self, eventtime):
         return (False, """
-OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs motor state: %s fs 1 switch: %s fs 2 switch: %s fs 3 switch: %s fs 4 switch: %s hub 1 switch: %s hub 2 switch: %s hub 3 switch: %s hub 4 switch: %s fast unload: %s current sensor: %.3f follower enabled: %s
+OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs motor state: %s fs 1 switch: %s fs 2 switch: %s fs 3 switch: %s fs 4 switch: %s hub 1 switch: %s hub 2 switch: %s hub 3 switch: %s hub 4 switch: %s fast unload: %s current sensor: %.3f follower enabled: %s command queue locked: %s command queue size: %d
 
 """ 
                 % (self.current_state.id, 
@@ -469,7 +475,9 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                    "%s (%.3f)" % (self.hub_switches[3].on, self.hub_switches[3].adc_value),
                    self.fast_unload,
                    self.current_sensor_value,
-                   self.follower_enable
+                   self.follower_enable,
+                   self.bldc_cmd_queue.locke_status(),
+                   self.bldc_cmd_queue.items()
                    ))
         
     def get_status(self, eventtime):
@@ -488,7 +496,9 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                 'hub_4_switch': "%s (%f.3)" % (self.hub_switches[3].on, self.hub_switches[3].adc_value),
                 'fast_unload': self.fast_unload,
                 'current_sensor' : self.current_sensor_value,
-                'follower_enabled' : self.follower_enable
+                'follower_enabled' : self.follower_enable,
+                'command_queue_locked' : self.bldc_cmd_queue.locke_status(),
+                'command_queue_size' : self.bldc_cmd_queue.items()
                 }
     
     def __init__(self, config) -> None:
