@@ -203,12 +203,18 @@ class BLDCCommandQueue(StateMachine):
                 
     def purge_queue(self):
         self.queue = []
+
+    def disconnect(self):
+        self.bldc_nreset_pin.set_pin(0.0);
+        self.reactor.pause(self.reactor.monotonic() + 0.101)
+
+    def connect(self):
+        self.bldc_nreset_pin.set_pin(1.0);
+        self.reactor.pause(self.reactor.monotonic() + 0.101)
                 
     def reset_motor(self):
-        self.bldc_nreset_pin.set_pin(0.0)
-        self.reactor.pause(self.reactor.monotonic() + .101)
-        self.bldc_nreset_pin.set_pin(1.0)
-        self.reactor.pause(self.reactor.monotonic() + .101)
+        self.disconnect()
+        self.connect()
         self.bldc_reset_count = 0
         
     def replay_action(self):
@@ -982,9 +988,11 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.current_spool = spool_idx
         while(not self.bldc_cmd_queue.empty()):
             reactor.pause(reactor.monotonic() + 0.1)
+        self.bldc_cmd_queue.disconnect()
         self.bldc_cmd_queue.stop()
         reactor.pause(reactor.monotonic() + 0.101)
         self.f1_enable(spool_idx, forward=True, speed=1.0)
+        self.bldc_cmd_queue.connect()
         self.bldc_cmd_queue.run_forward(0.6)
         while(not self.hub_switches[spool_idx].on):
             reactor.pause(reactor.monotonic() + 0.1)
@@ -997,6 +1005,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         while(self.filament_pressure_sensor.last_value < self.schmitt_trigger_upper):
             reactor.pause(reactor.monotonic() + 0.01)
         self.f1_stop()
+        self.bldc_cmd_queue.disconnect()
         self.bldc_cmd_queue.stop()
         reactor.pause(reactor.monotonic() + 0.101)
         self.loading_end()
@@ -1035,6 +1044,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         self.f1_enable(self.current_spool, forward=False)
         delay = self.spools[self.current_spool].get_unload_delay()
         reactor.pause(reactor.monotonic() + delay) # the f1s dc motor has some delay getting the spool to start moving because of inertia
+        self.bldc_cmd_queue.connect()
         self.bldc_cmd_queue.run_backward(unload_speed, nowait=True)
         self.bldc_cmd_queue.unlock()
          # bldc queue lock end
@@ -1060,6 +1070,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
         while(not self.bldc_cmd_queue.empty()):
             reactor.pause(reactor.monotonic() + 0.01)
         # we must terminate the monitor for the BLDC motor not running
+        self.bldc_cmd_queue.disconnect()
         self.bldc_cmd_queue.stop()
         reactor.pause(reactor.monotonic() + 0.4)
         self.f1_stop()
