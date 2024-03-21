@@ -838,7 +838,7 @@ OAMS: state id: %s current spool: %s filament buffer adc: %s bldc state: %s fs m
                     logging.info("OAMS: (UNLOADING MONITOR) Revision v1.4")
                     # here we calculate the BLDC speed based on the current load
                     adjustment = self.BLDC_PID.current_update(eventtime, self.current_sensor_value)
-                    pwm = self.spools[self.current_spool].unload_lower_range + adjustment*self.spools[self.current_spool].unload_m
+                    pwm = self.spools[self.current_spool].unload_lower_range + adjustment*(1 - self.spools[self.current_spool].unload_lower_range)
                     logging.info("OAMS: (UNLOADING MONITOR) setting pwm to %.3f, previous pwm %.3f, process: %.3f" % (pwm, (1 - self.bldc_cmd_queue.pwm_value), self.current_sensor_value))
                     if pwm != (1 - self.bldc_cmd_queue.pwm_value):
                         self.bldc_cmd_queue.enqueue(lambda: self.bldc_cmd_queue.run_backward(pwm, nowait=True))
