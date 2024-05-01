@@ -112,22 +112,28 @@ class HDC1080:
         celsius -- If the data is kept as celsius after reading (default False)
         """
         # write to the pointer register, changing it to the temperature register
-        self.i2c.i2c_write([TEMP_REG])
-        self.reactor.pause(self.reactor.monotonic() + .0635)
-        read = self.i2c.i2c_read([], 2)
-        data = bytearray(read['response'])
-        temp = (data[0] * 256) + data[1]
-        cTemp = (temp / 65536.0) * 165.0 - 40
-        return cTemp
+        try:
+            self.i2c.i2c_write([TEMP_REG])
+            self.reactor.pause(self.reactor.monotonic() + .0635)
+            read = self.i2c.i2c_read([], 2)
+            data = bytearray(read['response'])
+            temp = (data[0] * 256) + data[1]
+            cTemp = (temp / 65536.0) * 165.0 - 40
+            return cTemp
+        except:
+            return 0.0
         
     def _read_humi(self):
-        self.i2c.i2c_write([HUMI_REG])
-        self.reactor.pause(self.reactor.monotonic() + .0635)
-        read = self.i2c.i2c_read([], 2)
-        data = bytearray(read['response'])
-        humidity = (data[0] * 256) + data[1]
-        percentHumidity = (humidity / 65536.0) * 100.0
-        return percentHumidity
+        try:
+            self.i2c.i2c_write([HUMI_REG])
+            self.reactor.pause(self.reactor.monotonic() + .0635)
+            read = self.i2c.i2c_read([], 2)
+            data = bytearray(read['response'])
+            humidity = (data[0] * 256) + data[1]
+            percentHumidity = (humidity / 65536.0) * 100.0
+            return percentHumidity
+        except:
+            return 0.0
 
     def _make_measurements(self):
         if not self.init_sent:
@@ -254,3 +260,4 @@ def load_config(config):
     # Register sensor
     pheater = config.get_printer().lookup_object("heaters")
     pheater.add_sensor_factory("HDC1080", HDC1080)
+
