@@ -37,6 +37,9 @@ class OAMS:
         self.mcu.register_response(
             self._oams_action_status, "oams_action_status"
         )
+        self.mcu.register_response(
+            self._oams_cmd_stats,"oams_cmd_stats"
+        )
         self.mcu.register_config_callback(self._build_config)
         self.name = config.get_name()
         self.register_commands(self.name)
@@ -45,6 +48,9 @@ class OAMS:
         self.action_status = None
         self.action_status_code = None
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
+        self.fps_value = 0
+        self.f1s_hes_value = [0, 0, 0, 0]
+        self.hub_hes_value = [0, 0, 0, 0]
         super().__init__()
 
     def get_status(self, eventtime):
@@ -52,9 +58,19 @@ class OAMS:
     
     def stats(self, eventtime):
         return (False, """
-OAMS: current_spool=%s
+OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_hes_value_2=%s f1s_hes_value_3=%s hub_hes_value_0=%s hub_hes_value_1=%s hub_hes_value_2=%s hub_hes_value_3=%s
 """ 
-                % (self.current_spool)) 
+                % (self.current_spool,
+                   self.fps_value,
+                   self.f1s_hes_value[0],
+                   self.f1s_hes_value[1],
+                   self.f1s_hes_value[2],
+                   self.f1s_hes_value[3],
+                   self.hub_hes_value[0],
+                   self.hub_hes_value[1],
+                   self.hub_hes_value[2],
+                   self.hub_hes_value[3]
+                )) 
 
     def handle_ready(self):
         try:
@@ -207,7 +223,17 @@ OAMS: current_spool=%s
             gcmd.respond_info("Follower enable in forward direction")
         elif enable == 0:
             gcmd.respond_info("Follower disabled")
-
+            
+    def _oams_cmd_stats(self, params):
+        self.fps_value = self.u32_to_float(params['fps_value'])
+        self.f1s_hes_value[0] = params['f1s_hes_value_0']
+        self.f1s_hes_value[1] = params['f1s_hes_value_1']
+        self.f1s_hes_value[2] = params['f1s_hes_value_2']
+        self.f1s_hes_value[3] = params['f1s_hes_value_3']
+        self.hub_hes_value[0] = params['hub_hes_value_0']
+        self.hub_hes_value[1] = params['hub_hes_value_1']
+        self.hub_hes_value[2] = params['hub_hes_value_2']
+        self.hub_hes_value[3] = params['hub_hes_value_3']
 
     def _oams_action_status(self,params):
         logging.info("oams status received")
