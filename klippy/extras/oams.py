@@ -263,7 +263,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
             % (
                 self.float_to_u32(self.fps_upper_threshold), 
                 self.float_to_u32(self.fps_lower_threshold), 
-                self.float_to_u32(self.fps_is_reversed)
+                self.fps_is_reversed
             )
         )
 
