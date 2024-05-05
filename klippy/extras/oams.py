@@ -6,6 +6,7 @@
 import logging
 import mcu
 import struct
+from math import pi
 
 OAMS_STATUS_LOADING = 0
 OAMS_STATUS_UNLOADING = 1
@@ -32,6 +33,11 @@ class OAMS:
         self.hub_hes_on = list(map(lambda x: float(x.strip()), config.get("hub_hes_on").split(",")))
         self.hub_hes_is_above = config.getboolean("hub_hes_is_above")
         self.filament_path_length = config.getfloat("ptfe_length")
+        
+        self.kd = config.getfloat("kd", 0.0)
+        self.ki = config.getfloat("ki", 0.0)
+        self.kp = config.getfloat("kp", 6.0)
+        
         self.name = config.get_name()
         self.current_spool = None
         self.mcu.register_response(
@@ -58,7 +64,7 @@ class OAMS:
     
     def stats(self, eventtime):
         return (False, """
-OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_hes_value_2=%s f1s_hes_value_3=%s hub_hes_value_0=%s hub_hes_value_1=%s hub_hes_value_2=%s hub_hes_value_3=%s
+OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_hes_value_2=%s f1s_hes_value_3=%s hub_hes_value_0=%s hub_hes_value_1=%s hub_hes_value_2=%s hub_hes_value_3=%s kp=%s ki=%s kd=%s
 """ 
                 % (self.current_spool,
                    self.fps_value,
@@ -69,7 +75,10 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
                    self.hub_hes_value[0],
                    self.hub_hes_value[1],
                    self.hub_hes_value[2],
-                   self.hub_hes_value[3]
+                   self.hub_hes_value[3],
+                   self.kp,
+                   self.ki,
+                   self.kd
                 )) 
 
     def handle_ready(self):
@@ -92,6 +101,10 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
             
             self.oams_calibrate_hub_hes_cmd = self.mcu.lookup_command(
                 "oams_cmd_calibrate_hub_hes spool=%c"
+            )
+            
+            self.oams_pid_cmd = self.mcu.lookup_command(
+                "oams_cmd_pid kp=%u ki=%u kd=%u"
             )
 
             cmd_queue = self.mcu.alloc_command_queue()
@@ -131,6 +144,50 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
         gcode.register_command("OAMS_CALIBRATE_HUB_HES",
             self.cmd_OAMS_CALIBRATE_HUB_HES,
             self.cmd_OAMS_CALIBRATE_HUB_HES_help)
+        
+        gcode.register_command("OAMS_PID_AUTOTUNE",
+            self.cmd_OAMS_PID_AUTOTUNE,
+            self.cmd_OAMS_PID_AUTOTUNE_help)
+        
+        gcode.register_command("OAMS_PID_SET",
+            self.cmd_OAMS_PID_SET,
+            self.cmd_OAMS_PID_SET_help)
+    
+    cmd_OAMS_PID_SET_help = "Set the PID values for the OAMS"
+    def cmd_OAMS_PID_SET(self, gcmd):
+        p = gcmd.get_float("P", None)
+        i = gcmd.get_float("I", None)
+        d = gcmd.get_float("D", None)
+        kp = self.float_to_u32(p)
+        ki = self.float_to_u32(i)
+        kd = self.float_to_u32(d)
+        self.oams_pid_cmd.send([kp, ki, kd])
+        self.kp = p
+        self.ki = i
+        self.kd = d
+        gcmd.respond_info("PID values set to P=%f I=%f D=%f" % (p, i, d))
+        
+    #TODO: Implement this completely
+    cmd_OAMS_PID_AUTOTUNE_help = "Run PID autotune"
+    def cmd_OAMS_PID_AUTOTUNE(self, gcmd):
+        target_flow = gcmd.get_float("TARGET_FLOW", None)
+        target_temp = gcmd.get_float("TARGET_TEMP", None)
+        
+        if target_flow is None:
+            raise gcmd.error("TARGET flowrate in mm^3/s is required")
+        if target_temp is None:
+            raise gcmd.error("TARGET temperature in degrees C is required")
+
+        
+        # Given a flowrate we will calculate 30 seconds of a G1 E command
+        extrusion_speed_per_min = 60*target_flow/(pi*(1.75/2)**2) # this is the G1 F parameter
+        extrusion_length = extrusion_speed_per_min/60*30 # this is the G1 E parameter
+        
+        gcode = self.printer.lookup_object("gcode")
+        
+        # turn on extruder heater and wait for it to stabilize
+        gcode.send("M104 S%f" % target_temp)
+        gcode.send("G1 E%f F%f" % (extrusion_length, extrusion_speed_per_min))
         
     cmd_OAMS_CALIBRATE_HUB_HES_help = "Calibrate the range of a single hub HES"
     def cmd_OAMS_CALIBRATE_HUB_HES(self, gcmd):
@@ -286,6 +343,15 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
                 self.float_to_u32(self.hub_hes_on[2]),
                 self.float_to_u32(self.hub_hes_on[3]),
                 self.hub_hes_is_above
+            )
+        )
+        
+        self.mcu.add_config_cmd(
+            "config_oams_pid kp=%u ki=%u kd=%u"
+            % (
+                self.float_to_u32(self.kp), 
+                self.float_to_u32(self.ki), 
+                self.float_to_u32(self.kd)
             )
         )
 
