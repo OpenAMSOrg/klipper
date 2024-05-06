@@ -38,6 +38,8 @@ class OAMS:
         self.ki = config.getfloat("ki", 0.0)
         self.kp = config.getfloat("kp", 6.0)
         
+        self.fps_target = config.getfloat("fps_target", 0.0)
+        
         self.name = config.get_name()
         self.current_spool = None
         self.mcu.register_response(
@@ -104,7 +106,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
             )
             
             self.oams_pid_cmd = self.mcu.lookup_command(
-                "oams_cmd_pid kp=%u ki=%u kd=%u"
+                "oams_cmd_pid kp=%u ki=%u kd=%u target=%u"
             )
 
             cmd_queue = self.mcu.alloc_command_queue()
@@ -347,11 +349,12 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
         )
         
         self.mcu.add_config_cmd(
-            "config_oams_pid kp=%u ki=%u kd=%u"
+            "config_oams_pid kp=%u ki=%u kd=%u target=%u"
             % (
                 self.float_to_u32(self.kp), 
                 self.float_to_u32(self.ki), 
-                self.float_to_u32(self.kd)
+                self.float_to_u32(self.kd),
+                self.float_to_u32(self.fps_target)
             )
         )
 
