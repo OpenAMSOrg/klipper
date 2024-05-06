@@ -38,7 +38,7 @@ class OAMS:
         self.ki = config.getfloat("ki", 0.0)
         self.kp = config.getfloat("kp", 6.0)
         
-        self.fps_target = config.getfloat("fps_target", 0.5)
+        self.fps_target = config.getfloat("fps_target", 0.5, minval=0.0, maxval=1.0, above=self.fps_lower_threshold, below=self.fps_upper_threshold)
         self.current_target = config.getfloat("current_target", 0.3, minval=0.2, maxval=0.4)
         
         self.name = config.get_name()
