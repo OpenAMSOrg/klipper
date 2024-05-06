@@ -38,7 +38,8 @@ class OAMS:
         self.ki = config.getfloat("ki", 0.0)
         self.kp = config.getfloat("kp", 6.0)
         
-        self.fps_target = config.getfloat("fps_target", 0.0)
+        self.fps_target = config.getfloat("fps_target", 0.5)
+        self.current_target = config.getfloat("current_target", 0.3)
         
         self.name = config.get_name()
         self.current_spool = None
@@ -361,6 +362,13 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
         self.mcu.add_config_cmd(
             "config_oams_ptfe length=%u"
             % (self.filament_path_length)
+        )
+        
+        self.mcu.add_config_cmd(
+            "config_oams_current target=%u"
+            % (
+                self.float_to_u32(self.current_target)
+            )
         )
         
     # these are available to the gcode
