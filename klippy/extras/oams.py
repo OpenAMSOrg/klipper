@@ -161,14 +161,25 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
         p = gcmd.get_float("P", None)
         i = gcmd.get_float("I", None)
         d = gcmd.get_float("D", None)
+        t = gcmd.get_float("TARGET", None)
+        if p is None:
+            raise gcmd.error("P value is required")
+        if i is None:
+            raise gcmd.error("I value is required")
+        if d is None:
+            raise gcmd.error("D value is required")
+        if t is None:
+            t = self.fps_target
         kp = self.float_to_u32(p)
         ki = self.float_to_u32(i)
         kd = self.float_to_u32(d)
-        self.oams_pid_cmd.send([kp, ki, kd])
+        kt = self.float_to_u32(t)
+        self.oams_pid_cmd.send([kp, ki, kd, kt])
         self.kp = p
         self.ki = i
         self.kd = d
-        gcmd.respond_info("PID values set to P=%f I=%f D=%f" % (p, i, d))
+        self.fps_target = t
+        gcmd.respond_info("PID values set to P=%f I=%f D=%f TARGET=%f" % (p, i, d, t))
         
     #TODO: Implement this completely
     cmd_OAMS_PID_AUTOTUNE_help = "Run PID autotune"
