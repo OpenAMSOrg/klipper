@@ -38,6 +38,10 @@ class OAMS:
         self.ki = config.getfloat("ki", 0.0)
         self.kp = config.getfloat("kp", 6.0)
         
+        self.current_kp = config.getfloat("current_kp", 0.375)
+        self.current_ki = config.getfloat("current_ki", 0.0)
+        self.current_kd = config.getfloat("current_kd", 0.0)
+
         self.fps_target = config.getfloat("fps_target", 0.5, minval=0.0, maxval=1.0, above=self.fps_lower_threshold, below=self.fps_upper_threshold)
         self.current_target = config.getfloat("current_target", 0.3, minval=0.1, maxval=0.4)
         
@@ -155,6 +159,35 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
         gcode.register_command("OAMS_PID_SET",
             self.cmd_OAMS_PID_SET,
             self.cmd_OAMS_PID_SET_help)
+        
+        gcode.register_command("OAMS_CURRENT_PID_SET",
+            self.cmd_OAMS_CURRENT_PID_SET,
+            self.cmd_OAMS_CURRENT_PID_SET_help)
+        
+    cmd_OAMS_CURRENT_PID_SET_help = "Set the PID values for the current sensor"
+    def cmd_OAMS_CURRENT_PID_SET(self, gcmd):
+        p = gcmd.get_float("P", None)
+        i = gcmd.get_float("I", None)
+        d = gcmd.get_float("D", None)
+        t = gcmd.get_float("TARGET", None)
+        if p is None:
+            raise gcmd.error("P value is required")
+        if i is None:
+            raise gcmd.error("I value is required")
+        if d is None:
+            raise gcmd.error("D value is required")
+        if t is None:
+            t = self.current_target
+        kp = self.float_to_u32(p)
+        ki = self.float_to_u32(i)
+        kd = self.float_to_u32(d)
+        kt = self.float_to_u32(t)
+        self.oams_pid_cmd.send([kp, ki, kd, kt])
+        self.current_kp = p
+        self.current_ki = i
+        self.current_kd = d
+        self.current_target = t
+        gcmd.respond_info("Current PID values set to P=%f I=%f D=%f TARGET=%f" % (p, i, d, t))
     
     cmd_OAMS_PID_SET_help = "Set the PID values for the OAMS"
     def cmd_OAMS_PID_SET(self, gcmd):
@@ -375,9 +408,13 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
             % (self.filament_path_length)
         )
         
+        
         self.mcu.add_config_cmd(
-            "config_oams_current target=%u"
+            "config_oams_current_pid kp=%u ki=%u kd=%u target=%u"
             % (
+                self.float_to_u32(self.current_kp), 
+                self.float_to_u32(self.current_ki), 
+                self.float_to_u32(self.current_kd),
                 self.float_to_u32(self.current_target)
             )
         )
