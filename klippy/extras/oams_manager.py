@@ -4,11 +4,13 @@ class OAMSManager:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.filament_groups = {}
+        self.oams = {}
         self.config = config
-        self.printer.register_object("oams_manager", self)
+        self.printer.add_object("oams_manager", self)
         self._initialize_oams()
         self._initialize_filament_groups()
         self.current_group = None
+        self.register_commands()
         # add handle on ready
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
         
@@ -16,24 +18,26 @@ class OAMSManager:
         self.current_group = self.determine_current_loaded_group()
 
     def _initialize_oams(self):
-        self.oams = self.printer.lookup_objects(module="oams")
+        for (name, oam) in self.printer.lookup_objects(module="oams"):
+            self.oams[name] = oam
         
     def _initialize_filament_groups(self):
-        self.filament_groups = self.printer.lookup_objects(module="filament_group")
-        
+        for (name, group) in self.printer.lookup_objects(module="filament_group"):
+            self.filament_groups[name] = group
+    
     def determine_current_loaded_group(self):
         for group_name, group in self.filament_groups.items():
-            for oam, bay_index in group.bays.items():
+            for (oam, bay_index) in group.bays:
                 if oam.is_bay_loaded(bay_index):
                     return group_name
-        return None
+        return None 
         
     def register_commands(self):
         gcode = self.printer.lookup_object("gcode")
         gcode.register_command(
-            "UNLOAD_GROUP",
-            self.cmd_UNLOAD_GROUP,
-            desc=self.cmd_UNLOAD_GROUP_help,
+            "UNLOAD",
+            self.cmd_UNLOAD,
+            desc=self.cmd_UNLOAD_help,
         )
         
         gcode.register_command(
@@ -83,15 +87,17 @@ class OAMSManager:
                 return True
         return False
     
-    cmd_UNLOAD = "Unload a spool from any of the OAMS if any is loaded"
+    cmd_UNLOAD_help = "Unload a spool from any of the OAMS if any is loaded"
     def cmd_UNLOAD(self, gcmd):
         for oam in self.oams:
             if oam.current_spool is not None:
                 oam.cmd_OAMS_UNLOAD_SPOOL()
+                self.current_group = None
                 return
         gcmd.respond_info("No spool is loaded in any of the OAMS")
+        self.current_group = None
         
-    cmd_LOAD_GROUP = "Load a spool from an specific group"
+    cmd_LOAD_GROUP_help = "Load a spool from an specific group"
     def cmd_LOAD_GROUP(self, gcmd):
         if self.is_printer_loaded():
             gcmd.respond_error("Printer is already loaded with a spool")

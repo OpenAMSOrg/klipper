@@ -81,9 +81,9 @@ class OAMS:
         return {"current_spool": self.current_spool}
     
     def is_bay_loaded(self, bay_index):
-        if self.f1s_hes_is_above and self.f1s_hes_value[bay_index] >= self.f1s_hes_on:
+        if self.f1s_hes_is_above and self.f1s_hes_value[bay_index] >= self.f1s_hes_on[bay_index]:
             return True
-        elif not self.f1s_hes_is_above and self.f1s_hes_value[bay_index] <= self.f1s_hes_on:
+        elif not self.f1s_hes_is_above and self.f1s_hes_value[bay_index] <= self.f1s_hes_on[bay_index]:
             return True
         return False
 

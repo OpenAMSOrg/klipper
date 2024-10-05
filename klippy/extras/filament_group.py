@@ -4,7 +4,7 @@ class FilamentGroup:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.group_name = config.get_name()
-        self.bays = {}  # bay_id -> (oam, bay_index)
+        self.bays = set()
         self.oams = []
         self._initialize_bays(config)
 
@@ -17,7 +17,7 @@ class FilamentGroup:
 
     def add_bay(self, oam, bay_index):
         bay_id = (oam, bay_index)
-        self.bays[bay_id] = oam
+        self.bays.add(bay_id)
         if oam not in self.oams:
             self.oams.append(oam)
 
