@@ -26,8 +26,7 @@ def log(canbus_iface):
         msg = bus.recv()
         # decode id
         id = msg.arbitration_id
-        ams = id >> 7 & 0x3
-        serial = id >> 2 & 0x3
+        ams = id >> 3 & 0xF
         log_level = id & 0x7
         if last_id != id:
             color = 'white'
@@ -41,9 +40,9 @@ def log(canbus_iface):
                 color = 'blue'
             elif log_level == 4:
                 color = 'gray'
-            #print("AMS: %d, Serial: %d, Level: %s --> " % (ams, serial, log_levels[log_level]), color), end='')
+            #print("AMS: %d, Level: %s --> " % (ams log_levels[log_level]), color), end='')
             print(colored("AMS: ","cyan") + colored(ams, 'white') + ", " +
-                  colored("Serial: ","cyan") + colored(serial, 'white') + ", " +
+                  #colored("Serial: ","cyan") + colored(serial, 'white') + ", " +
                   colored("Level: ","cyan") + colored(log_levels[log_level], log_level_colors[log_level]) + " ", end = '')
         color = 'white'
         print(colored("%s" % msg.data.decode("utf8"), color), end='')
