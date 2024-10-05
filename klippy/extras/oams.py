@@ -59,14 +59,12 @@ class OAMS:
         self.current_target = config.getfloat(
             "current_target", 0.3, minval=0.1, maxval=0.4
         )
-
-        self.name = config.get_name()
         self.current_spool = None
         self.mcu.register_response(self._oams_action_status, "oams_action_status")
         self.mcu.register_response(self._oams_cmd_stats, "oams_cmd_stats")
         self.mcu.register_config_callback(self._build_config)
         self.name = config.get_name()
-        self.register_commands(self.name)
+        self.register_commands(self.name.split()[-1])
         # self.printer.add_object("oams", self)
         self.reactor = self.printer.get_reactor()
         self.action_status = None
@@ -81,17 +79,13 @@ class OAMS:
         return {"current_spool": self.current_spool}
     
     def is_bay_loaded(self, bay_index):
-        if self.f1s_hes_is_above and self.f1s_hes_value[bay_index] >= self.f1s_hes_on[bay_index]:
-            return True
-        elif not self.f1s_hes_is_above and self.f1s_hes_value[bay_index] <= self.f1s_hes_on[bay_index]:
-            return True
-        return False
+        return bool(self.f1s_hes_value[bay_index])
 
     def stats(self, eventtime):
         return (
             False,
             """
-OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_hes_value_2=%s f1s_hes_value_3=%s hub_hes_value_0=%s hub_hes_value_1=%s hub_hes_value_2=%s hub_hes_value_3=%s kp=%s ki=%s kd=%s
+OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_hes_value_2=%d f1s_hes_value_3=%d hub_hes_value_0=%d hub_hes_value_1=%d hub_hes_value_2=%d hub_hes_value_3=%d kp=%d ki=%d kd=%d
 """
             % (
                 self.current_spool,
@@ -180,7 +174,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
             "OAMS",
             self.name,
             self.cmd_OAMS_FOLLOWER,
-            self.cmd_OAMS_ENABLE_FOLLOWER_help,
+            self.cmd_OAMS_FOLLOWER_help,
         )
 
         gcode.register_mux_command(
@@ -344,6 +338,19 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
         else:
             gcmd.error("Calibration of PTFE length failed")
 
+    def load_spool(self, spool_idx):
+        self.action_status = OAMS_STATUS_LOADING
+        self.oams_load_spool_cmd.send([spool_idx])
+        while self.action_status is not None:
+            self.reactor.pause(self.reactor.monotonic() + 0.1)
+        if self.action_status_code == OAMS_OP_CODE_SUCCESS:
+            self.current_spool = spool_idx
+            return True, "Spool loaded successfully"
+        elif self.action_status_code == OAMS_OP_CODE_ERROR_BUSY:
+            return False, "OAMS is busy"
+        else:
+            return False, "Unknown error from OAMS with code %d" % self.action_status_code
+
     cmd_OAMS_LOAD_SPOOL_help = "Load a new spool of filament"
 
     def cmd_OAMS_LOAD_SPOOL(self, gcmd):
@@ -354,12 +361,13 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
             raise gcmd.error("SPOOL index is required")
         if spool_idx < 0 or spool_idx > 3:
             raise gcmd.error("Invalid SPOOL index")
+        
         success, message = self.load_spool(spool_idx)
         
         if success:
             gcmd.respond_info(message)
         else:
-            raise gcmd.error(message)
+            gcmd.error(message)
             
     def unload_spool(self, spool_idx):
         self.action_status = OAMS_STATUS_UNLOADING
@@ -389,7 +397,10 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%s f1s_hes_value_1=%s f1s_he
         else:
             gcmd.error("Unknown error from OAMS")
 
-    cmd_OAMS_ENABLE_FOLLOWER_help = "Enable the follower"
+    def set_oams_follower(self, enable, direction):
+        self.oams_follower_cmd.send([enable, direction])
+
+    cmd_OAMS_FOLLOWER_help = "Enable or disable follower and set its direction"
 
     def cmd_OAMS_FOLLOWER(self, gcmd):
         enable = gcmd.get_int("ENABLE", None)

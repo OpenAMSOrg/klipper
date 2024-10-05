@@ -13,7 +13,7 @@ import argparse
 LOGGING_BASE_ADDRESS = 0x780
 
 log_levels = {0 : 'FATAL', 1 : 'ERROR', 2 : 'WARNING', 3 : 'INFO', 4 : 'DEBUG'}
-log_level_colors = {0 : 'red', 1 : 'yellow', 2 : 'green', 3 : 'blue', 4 : 'dark_gray'}
+log_level_colors = {0 : 'red', 1 : 'yellow', 2 : 'green', 3 : 'blue', 4 : 'dark_grey'}
 
 def log(canbus_iface):
     # Open CAN socket
