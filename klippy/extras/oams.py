@@ -29,6 +29,8 @@ class OAMS:
         self.fps_upper_threshold = config.getfloat("fps_upper_threshold")
         self.fps_lower_threshold = config.getfloat("fps_lower_threshold")
         self.fps_is_reversed = config.getboolean("fps_is_reversed")
+        self.encoder_clicks = 0
+        
         self.f1s_hes_on = list(
             map(lambda x: float(x.strip()), config.get("f1s_hes_on").split(","))
         )
@@ -78,14 +80,17 @@ class OAMS:
     def get_status(self, eventtime):
         return {"current_spool": self.current_spool}
     
-    def is_bay_loaded(self, bay_index):
+    def is_bay_ready(self, bay_index):
         return bool(self.f1s_hes_value[bay_index])
+    
+    def is_bay_loaded(self, bay_index):
+        return bool(self.hub_hes_value[bay_index])
 
     def stats(self, eventtime):
         return (
             False,
             """
-OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_hes_value_2=%d f1s_hes_value_3=%d hub_hes_value_0=%d hub_hes_value_1=%d hub_hes_value_2=%d hub_hes_value_3=%d kp=%d ki=%d kd=%d
+OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_hes_value_2=%d f1s_hes_value_3=%d hub_hes_value_0=%d hub_hes_value_1=%d hub_hes_value_2=%d hub_hes_value_3=%d kp=%d ki=%d kd=%d encoder_clicks=%d
 """
             % (
                 self.current_spool,
@@ -101,6 +106,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_he
                 self.kp,
                 self.ki,
                 self.kd,
+                self.encoder_clicks,
             ),
         )
 
@@ -427,6 +433,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_he
         self.hub_hes_value[1] = params["hub_hes_value_1"]
         self.hub_hes_value[2] = params["hub_hes_value_2"]
         self.hub_hes_value[3] = params["hub_hes_value_3"]
+        self.encoder_clicks = params["encoder_clicks"]
 
     def _oams_action_status(self, params):
         logging.info("oams status received")
