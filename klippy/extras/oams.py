@@ -518,10 +518,6 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_he
 
         self.mcu.add_config_cmd("config_oams_logger idx=%u" % (self.oams_idx))
 
-    # these are available to the gcode
-    def get_status(self, eventtime):
-        return {"current_spool": self.current_spool}
-
 
 def load_config_prefix(config):
     return OAMS(config)

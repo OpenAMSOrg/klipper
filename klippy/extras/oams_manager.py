@@ -4,11 +4,10 @@ PAUSE_DISTANCE = 60
 
 class OAMSManager:
     def __init__(self, config):
+        self.config = config
         self.printer = config.get_printer()
         self.filament_groups = {}
         self.oams = {}
-        self.config = config
-        self.printer.add_object("oams_manager", self)
         self._initialize_oams()
         self._initialize_filament_groups()
         
@@ -23,6 +22,10 @@ class OAMSManager:
         
         self.register_commands()
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
+
+    # these are available to the gcode
+    def get_status(self, eventtime):
+        return {"current_group": self.current_group}
         
     def handle_ready(self):
         self.current_group, current_oam, current_spool_idx = self.determine_current_loaded_group()
@@ -226,10 +229,6 @@ class OAMSManager:
                 else:
                     raise gcmd.error(message)
         gcmd.respond_info("No spool available for group " + group_name)
-        
-
-def load_config_prefix(config):
-    return OAMSManager(config)
 
 def load_config(config):
     return OAMSManager(config)
