@@ -14,28 +14,28 @@ The `OAMSManager` manages filament spool loading and unloading for 3D printers, 
 ### G-code Commands
 The following G-code commands are registered by `OAMSManager` and can be executed from the printer's terminal or added to print start/stop scripts.
 
-#### `CURRENT_LOADED_GROUP`
+#### `OAMSM_CURRENT_LOADED_GROUP`
 - **Description:** Returns the current loaded filament group, if any.
-- **Usage:** `CURRENT_LOADED_GROUP`
+- **Usage:** `OAMSM_CURRENT_LOADED_GROUP`
 - **Example Output:** `Current Group: T0`
 
-#### `FOLLOWER`
+#### `OAMSM_FOLLOWER`
 - **Description:** Enables or disables the follower motor on the currently loaded spool. It also allows setting the rotation direction for the follower.
 - **Parameters:**
   - `ENABLE` (required): `1` to enable, `0` to disable.
   - `DIRECTION` (required): `1` for clockwise, `0` for counterclockwise.
-- **Usage:** `FOLLOWER ENABLE=1 DIRECTION=1`
+- **Usage:** `OAMSM_FOLLOWER ENABLE=1 DIRECTION=1`
 
-#### `UNLOAD_FILAMENT`
+#### `OAMSM_UNLOAD_FILAMENT`
 - **Description:** Unloads the current spool from any loaded filament group.
-- **Usage:** `UNLOAD_FILAMENT`
+- **Usage:** `OAMSM_UNLOAD_FILAMENT`
 - **Example Output:** `Unloading currently loaded spool`
 
-#### `LOAD_FILAMENT`
+#### `OAMSM_LOAD_FILAMENT`
 - **Description:** Loads a spool from a specified filament group.
 - **Parameters:**
   - `GROUP` (required): Name of the filament group to load from.
-- **Usage:** `LOAD_FILAMENT GROUP=T0`
+- **Usage:** `OAMSM_LOAD_FILAMENT GROUP=T0`
 - **Example Output:** `Loaded spool from T0`
 
 
@@ -78,7 +78,7 @@ ALL commands must contain OAMS=<ams_idx> as the parameter to address the correct
 - `SPOOL`: Specifies the spool index (0 to 3).  
 
 ### 6. `OAMS_PID_SET`
-**Description:** Manually set the PID values for filament tracking.  
+**Description:** Manually set the PID values for filament rewinds.  
 **Usage:** `OAMS_PID_SET P=<float> I=<float> D=<float> TARGET=<float>`  
 **Parameters:**  
 - `P`: Proportional gain value.  

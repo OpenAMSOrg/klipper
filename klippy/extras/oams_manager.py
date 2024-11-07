@@ -148,25 +148,25 @@ class OAMSManager:
     def register_commands(self):
         gcode = self.printer.lookup_object("gcode")
         gcode.register_command(
-            "UNLOAD_FILAMENT",
+            "OAMSM_UNLOAD_FILAMENT",
             self.cmd_UNLOAD_FILAMENT,
             desc=self.cmd_UNLOAD_FILAMENT_help,
         )
         
         gcode.register_command(
-            "LOAD_FILAMENT",
+            "OAMSM_LOAD_FILAMENT",
             self.cmd_LOAD_FILAMENT,
             desc=self.cmd_LOAD_FILAMENT_help,
         )
         
         gcode.register_command(
-            "FOLLOWER",
+            "OAMSM_FOLLOWER",
             self.cmd_FOLLOWER,
             desc=self.cmd_FOLLOWER_help,
         )
         
         gcode.register_command(
-            "CURRENT_LOADED_GROUP",
+            "OAMSM_CURRENT_LOADED_GROUP",
             self.cmd_CURRENT_LOADED_GROUP,
             desc=self.cmd_CURRENT_LOADED_GROUP_help,
         )
