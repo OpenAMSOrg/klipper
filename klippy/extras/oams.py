@@ -158,19 +158,20 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_he
         
 
     def register_commands(self, name):
+        id = str(self.oams_idx)
         # Register commands
         gcode = self.printer.lookup_object("gcode")
         gcode.register_mux_command(
             "OAMS_LOAD_SPOOL",
             "OAMS",
-            self.oams_idx,
+            id,
             self.cmd_OAMS_LOAD_SPOOL,
             desc=self.cmd_OAMS_LOAD_SPOOL_help,
         )
         gcode.register_mux_command(
             "OAMS_UNLOAD_SPOOL",
             "OAMS",
-            self.oams_idx,
+            id,
             self.cmd_OAMS_UNLOAD_SPOOL,
             self.cmd_OAMS_UNLOAD_SPOOL_help,
         )
@@ -178,7 +179,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_he
         gcode.register_mux_command(
             "OAMS_FOLLOWER",
             "OAMS",
-            self.oams_idx,
+            id,
             self.cmd_OAMS_FOLLOWER,
             self.cmd_OAMS_FOLLOWER_help,
         )
@@ -186,7 +187,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_he
         gcode.register_mux_command(
             "OAMS_CALIBRATE_PTFE_LENGTH",
             "OAMS",
-            self.oams_idx,
+            id,
             self.cmd_OAMS_CALIBRATE_PTFE_LENGTH,
             self.cmd_OAMS_CALIBRATE_PTFE_LENGTH_help,
         )
@@ -194,7 +195,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_he
         gcode.register_mux_command(
             "OAMS_CALIBRATE_HUB_HES",
             "OAMS",
-            self.oams_idx,
+            id,
             self.cmd_OAMS_CALIBRATE_HUB_HES,
             self.cmd_OAMS_CALIBRATE_HUB_HES_help,
         )
@@ -202,7 +203,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_he
         gcode.register_mux_command(
             "OAMS_PID_AUTOTUNE",
             "OAMS",
-            self.oams_idx,
+            id,
             self.cmd_OAMS_PID_AUTOTUNE,
             self.cmd_OAMS_PID_AUTOTUNE_help,
         )
@@ -210,7 +211,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_he
         gcode.register_mux_command(
             "OAMS_PID_SET",
             "OAMS",
-            self.oams_idx,
+            id,
             self.cmd_OAMS_PID_SET,
             self.cmd_OAMS_PID_SET_help,
         )
@@ -218,7 +219,7 @@ OAMS: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_he
         gcode.register_mux_command(
             "OAMS_CURRENT_PID_SET",
             "OAMS",
-            self.oams_idx,
+            id,
             self.cmd_OAMS_CURRENT_PID_SET,
             self.cmd_OAMS_CURRENT_PID_SET_help,
         )
