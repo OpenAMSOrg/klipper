@@ -45,7 +45,7 @@ This document provides a list of all available G-code commands for the OAMS ACE 
 
 ## Command List
 
-ALL commands must contain OAMS=<ams_idx> as the parameter to address the correct AMS.
+ALL commands must contain OAMS=<oams_idx> as the parameter to address the correct AMS.
 
 ### 1. `OAMS_LOAD_SPOOL`
 **Description:** Load a specified spool of filament into the system.  
