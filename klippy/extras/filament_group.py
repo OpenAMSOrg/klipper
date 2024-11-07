@@ -4,7 +4,7 @@ class FilamentGroup:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.group_name = config.get_name().split()[-1]
-        self.bays = set()
+        self.bays = []
         self.oams = []
         self._initialize_bays(config)
 
