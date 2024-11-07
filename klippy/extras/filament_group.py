@@ -17,7 +17,7 @@ class FilamentGroup:
 
     def add_bay(self, oam, bay_index):
         bay_id = (oam, bay_index)
-        self.bays.add(bay_id)
+        self.bays.append(bay_id)
         if oam not in self.oams:
             self.oams.append(oam)
 
