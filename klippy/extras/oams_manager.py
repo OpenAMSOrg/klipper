@@ -189,10 +189,12 @@ class OAMSManager:
         direction = gcmd.get_int('DIRECTION')
         if direction is None:
             gcmd.respond_info("Missing DIRECTION parameter")
+        loaded = False
         for _, oam in self.oams.items():
             if oam.current_spool is not None:
                 oam.set_oams_follower(enable, direction)
-                return
+                loaded = True
+        if not loaded:
             gcmd.respond_info("No spool is currently loaded")
     
     def is_printer_loaded(self):
