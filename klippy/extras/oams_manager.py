@@ -19,6 +19,8 @@ class OAMSManager:
         self.monitor_spool_timer = None
         self.monitor_pause_timer = None
         self.monitor_load_next_spool_timer = None
+
+        self.reload_before_toolhead_distance = config.getfloat("reload_before_toolhead_distance", 0.0)
         
         self.register_commands()
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
@@ -75,7 +77,7 @@ class OAMSManager:
         else:
             self.runout_after_position = extruder.last_position - self.runout_position
             logging.info("OAMS: Traveled after runout: %s" % self.runout_after_position)
-            if self.runout_after_position + pause_distance > self.current_spool[0].filament_path_length / 1.14:
+            if self.runout_after_position + pause_distance + self.reload_before_toolhead_distance > self.current_spool[0].filament_path_length / 1.14:
                 logging.info("OAMS: Loading next spool in the filament group.")
                 for (oam, bay_index) in self.filament_groups[self.current_group].bays:
                     if oam.is_bay_ready(bay_index):
