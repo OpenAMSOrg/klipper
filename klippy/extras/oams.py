@@ -151,13 +151,14 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             )
             
             self.current_spool = self.determine_current_spool()
-            self.set_led_error(0, 0)
-            self.set_led_error(1, 0)
-            self.set_led_error(2, 0)
-            self.set_led_error(3, 0)
+            self.clear_errors()
             
         except Exception as e:
             logging.error("Failed to initialize OAMS commands: %s", e)
+            
+    def clear_errors(self):
+        for i in range(4):
+            self.set_led_error(i, 0)
             
     def set_led_error(self, idx, value):
         logging.info("Setting LED %d to %d", idx, value)
