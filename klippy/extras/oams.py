@@ -29,6 +29,7 @@ class OAMS:
         self.fps_upper_threshold = config.getfloat("fps_upper_threshold")
         self.fps_lower_threshold = config.getfloat("fps_lower_threshold")
         self.fps_is_reversed = config.getboolean("fps_is_reversed")
+        self.i_value = 0.0
         self.encoder_clicks = 0
         
         self.f1s_hes_on = list(
@@ -64,6 +65,7 @@ class OAMS:
         self.current_spool = None
         self.mcu.register_response(self._oams_action_status, "oams_action_status")
         self.mcu.register_response(self._oams_cmd_stats, "oams_cmd_stats")
+        self.mcu.register_response(self._oams_cmd_current_stats, "oams_cmd_current_status")
         self.mcu.register_config_callback(self._build_config)
         self.name = config.get_name()
         self.register_commands(self.name.split()[-1])
@@ -90,7 +92,7 @@ class OAMS:
         return (
             False,
             """
-OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_hes_value_2=%d f1s_hes_value_3=%d hub_hes_value_0=%d hub_hes_value_1=%d hub_hes_value_2=%d hub_hes_value_3=%d kp=%d ki=%d kd=%d encoder_clicks=%d
+OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1s_hes_value_2=%d f1s_hes_value_3=%d hub_hes_value_0=%d hub_hes_value_1=%d hub_hes_value_2=%d hub_hes_value_3=%d kp=%d ki=%d kd=%d encoder_clicks=%d i_value=%.2f
 """
             % ( self.oams_idx,
                 self.current_spool,
@@ -107,6 +109,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
                 self.ki,
                 self.kd,
                 self.encoder_clicks,
+                self.i_value,
             ),
         )
 
@@ -135,6 +138,9 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             self.oams_pid_cmd = self.mcu.lookup_command(
                 "oams_cmd_pid kp=%u ki=%u kd=%u target=%u"
             )
+            self.oams_set_led_error_cmd = self.mcu.lookup_command(
+                "oams_set_led_error idx=%c value=%c"
+            )
 
             cmd_queue = self.mcu.alloc_command_queue()
 
@@ -145,9 +151,17 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             )
             
             self.current_spool = self.determine_current_spool()
+            self.set_led_error(0, 0)
+            self.set_led_error(1, 0)
+            self.set_led_error(2, 0)
+            self.set_led_error(3, 0)
             
         except Exception as e:
             logging.error("Failed to initialize OAMS commands: %s", e)
+            
+    def set_led_error(self, idx, value):
+        logging.info("Setting LED %d to %d", idx, value)
+        self.oams_set_led_error_cmd.send([idx, value])
             
     def determine_current_spool(self):
         params = self.oams_spool_query_spool_cmd.send()
@@ -435,6 +449,12 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         self.hub_hes_value[2] = params["hub_hes_value_2"]
         self.hub_hes_value[3] = params["hub_hes_value_3"]
         self.encoder_clicks = params["encoder_clicks"]
+        
+    def _oams_cmd_current_stats(self, params):
+        self.i_value = self.u32_to_float(params["current_value"])
+
+    def get_current(self):
+        return self.i_value
 
     def _oams_action_status(self, params):
         logging.info("oams status received")

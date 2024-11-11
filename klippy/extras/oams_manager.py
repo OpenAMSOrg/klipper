@@ -1,6 +1,10 @@
 import logging
+import time
+from functools import partial
+from collections import deque
 
 PAUSE_DISTANCE = 60
+F1S_CURRENT_SAMPLES = 3
 
 class OAMSManager:
     def __init__(self, config):
@@ -19,7 +23,11 @@ class OAMSManager:
         self.monitor_spool_timer = None
         self.monitor_pause_timer = None
         self.monitor_load_next_spool_timer = None
-
+        self.f1s_current_max = config.getfloat("f1s_current_max", 0.7)
+        self.f1s_current_max_samples = config.getint("f1s_current_max_samples", F1S_CURRENT_SAMPLES)
+        self.f1s_current_samples = deque(maxlen=self.f1s_current_max_samples)
+        self.monitor_timers = []  # Initialize monitor_timers
+        
         self.reload_before_toolhead_distance = config.getfloat("reload_before_toolhead_distance", 0.0)
         
         self.register_commands()
@@ -180,15 +188,18 @@ class OAMSManager:
             gcmd.respond_info(group_name)
         else:
             gcmd.respond_info("No group is currently loaded")
-        
+        return  # Add return statement
+    
     cmd_FOLLOWER_help = "Enable the follower on whatever OAMS is current loaded"
     def cmd_FOLLOWER(self, gcmd):
         enable = gcmd.get_int('ENABLE')
         if enable is None:
             gcmd.respond_info("Missing ENABLE parameter")
+            return  # Add return statement
         direction = gcmd.get_int('DIRECTION')
         if direction is None:
             gcmd.respond_info("Missing DIRECTION parameter")
+            return  # Add return statement
         loaded = False
         for _, oam in self.oams.items():
             if oam.current_spool is not None:
@@ -196,6 +207,7 @@ class OAMSManager:
                 loaded = True
         if not loaded:
             gcmd.respond_info("No spool is currently loaded")
+        return  # Add return statement
     
     def is_printer_loaded(self):
         # determine if any of the oams has a spool loaded
@@ -211,15 +223,16 @@ class OAMSManager:
                 oam.cmd_OAMS_UNLOAD_SPOOL(gcmd)
                 self.current_group = None
                 self.current_spool = None
-                return
+                return  # Add return statement
         gcmd.respond_info("No spool is loaded in any of the OAMS")
         self.current_group = None
+        return  # Add return statement
         
     cmd_LOAD_FILAMENT_help = "Load a spool from an specific group"
     def cmd_LOAD_FILAMENT(self, gcmd):
         if self.is_printer_loaded():
             gcmd.respond_info("Printer is already loaded with a spool")
-            return
+            return  # Add return statement
         group_name = gcmd.get('GROUP')
         for (oam, bay_index) in self.filament_groups[group_name].bays:
             if oam.is_bay_ready(bay_index):
@@ -229,10 +242,45 @@ class OAMSManager:
                     self.current_spool = (oam, bay_index)
                     gcmd.respond_info(message)
                     self.current_group = group_name
-                    return
+                    return  # Add return statement
                 else:
                     raise gcmd.error(message)
         gcmd.respond_info("No spool available for group " + group_name)
+        return  # Add return statement
+        
+    def _pause_printer_message(self, message):
+        logging.info("OAMS: %s" % (message))
+        gcode = self.printer.lookup_object("gcode")
+        message = "Print has been paused: " + message
+        gcode.run_script("M118 " + message)
+        gcode.run_script("M114 " + message)
+        gcode.run_script("PAUSE")
+        
+    def _monitor_unload_current(self, eventtime):
+        if self.current_group is not None:
+            oams = self.filament_groups[self.current_group].get_oams()
+            i = oams.get_current()
+            self.f1s_current_samples.append(i)
+            # find average of the last samples
+            avg = sum(self.f1s_current_samples) / len(self.f1s_current_samples)
+            if avg > self.f1s_current_max:
+                logging.info("OAMS: Current exceeded threshold, pausing print.")
+                # we also want to flash the leds on the corresponding OAMS and spool bay
+                oams.set_led_error(oams.current_spool, 1)
+                self._pause_printer_message("Printer paused because the first stage feeder current exceeded threshold of %s" % self.f1s_current_max)
+                self.stop_all_monitors()
+                return self.printer.get_reactor().NEVER
+        return eventtime + 1.0
+    
+    def start_monitors(self):
+        self.monitor_timers = []
+        reactor = self.printer.get_reactor()
+        self.monitor_timers.append(reactor.register_timer(self._monitor_unload_current, reactor.NOW))
+    
+    def stop_monitors(self):
+        for timer in self.monitor_timers:
+            self.printer.get_reactor().unregister_timer(timer)
+        self.monitor_timers = []
 
 def load_config(config):
     return OAMSManager(config)
