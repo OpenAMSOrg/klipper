@@ -47,8 +47,8 @@ class OAMSManager:
 
     def get_status(self, eventtime):
         return {"current_group": self.current_group}
-        
-    def handle_ready(self):
+    
+    def determine_state(self):
         self.current_group, current_oam, current_spool_idx = self.determine_current_loaded_group()
         if current_oam is not None and current_spool_idx is not None:
             self.current_spool = (current_oam, current_spool_idx)
@@ -56,8 +56,9 @@ class OAMSManager:
         else:
             self.current_spool = None
             self.current_state = OAMSState("UNLOADED", self.reactor.monotonic() , None)
-        reactor = self.printer.get_reactor()
-        self.monitor_spool_timer = reactor.register_timer(self._monitor_spool, reactor.NOW)
+        
+    def handle_ready(self):
+        self.determine_state()
         self.start_monitors()
 
     def _log_status(self, is_printing):
@@ -197,11 +198,14 @@ class OAMSManager:
     
     cmd_CLEAR_ERRORS_help = "Clear the error state of the OAMS"
     def cmd_CLEAR_ERRORS(self, gcmd):
-        for _, oam in self.oams.items():
-            oam.clear_errors()
         if len(self.monitor_timers) > 0:
             self.stop_monitors()
+        self.encoder_samples.clear()
+        for _, oam in self.oams.items():
+            oam.clear_errors()
+        self.determine_state()
         self.start_monitors()
+        
         return
     
     cmd_CURRENT_LOADED_GROUP_help = "Get the current loaded group"
@@ -251,17 +255,22 @@ class OAMSManager:
                 self.current_state.since = self.reactor.monotonic()
                 self.current_state.current_spool = (oam, oam.current_spool)
                 
-                oam.cmd_OAMS_UNLOAD_SPOOL(gcmd)
                 
-                self.current_state.name = "UNLOADED"
-                self.current_state.current_spool = None
-                self.current_state.following = False
-                self.current_state.direction = 0
-                self.current_state.since = self.reactor.monotonic()
+                success, message = oam.unload_spool()
                 
-                self.current_group = None
-                self.current_spool = None
-                return
+                if success:
+                    self.current_state.name = "UNLOADED"
+                    self.current_state.current_spool = None
+                    self.current_state.following = False
+                    self.current_state.direction = 0
+                    self.current_state.since = self.reactor.monotonic()
+                    
+                    self.current_group = None
+                    self.current_spool = None
+                    return
+                else:
+                    gcmd.respond_info(message)
+                    return
         gcmd.respond_info("No spool is loaded in any of the OAMS")
         self.current_group = None
         return
@@ -298,7 +307,8 @@ class OAMSManager:
                     self.current_group = group_name
                     return
                 else:
-                    raise gcmd.error(message)
+                    gcmd.respond_info(message)
+                    return
         gcmd.respond_info(f"No spool available for group {group_name}")
         return
         
@@ -311,29 +321,32 @@ class OAMSManager:
         gcode.run_script("PAUSE")
         
     def _monitor_unload_speed(self, eventtime):
+        logging.info("OAMS: Monitoring unloading speed state: %s" % self.current_state.name)
         if self.current_state.name == "UNLOADING":
             self.encoder_samples.append(self.current_state.current_spool[0].encoder_clicks)
             if len(self.encoder_samples) < ENCODER_SAMPLES:
                 return eventtime + 1.0
             encoder_diff = abs(self.encoder_samples[-1] - self.encoder_samples[0])
-            #logging.info("OAMS[%d] Unload Monitor: Encoder diff %d" %(self.current_state.current_spool[1], encoder_diff))
-            if encoder_diff < MIN_ENCODER_DIFF:
-                self._pause_printer_message("Printer paused because the unloading speed was too low")
+            logging.info("OAMS[%d] Unload Monitor: Encoder diff %d" %(self.current_state.current_spool[1], encoder_diff))
+            if encoder_diff < MIN_ENCODER_DIFF:              
                 self.current_state.current_spool[0].set_led_error(self.current_state.current_spool[1], 1)
+                self._pause_printer_message("Printer paused because the unloading speed was too low")
+                logging.info("after unload speed too low")
                 self.stop_monitors()
                 return self.printer.get_reactor().NEVER
         return eventtime + 1.0
     
     def _monitor_load_speed(self, eventtime):
+        logging.info("OAMS: Monitoring loading speed state: %s" % self.current_state.name)
         if self.current_state.name == "LOADING" and self.reactor.monotonic() - self.current_state.since > MONITOR_ENCODER_LOADING_SPEED_AFTER:
             self.encoder_samples.append(self.current_state.current_spool[0].encoder_clicks)
             if len(self.encoder_samples) < ENCODER_SAMPLES:
                 return eventtime + 1.0
             encoder_diff = abs(self.encoder_samples[-1] - self.encoder_samples[0])
-            #logging.info("OAMS[%d] Load Monitor: Encoder diff %d" %(self.current_state.current_spool[1], encoder_diff))
+            logging.info("OAMS[%d] Load Monitor: Encoder diff %d" %(self.current_state.current_spool[1], encoder_diff))
             if encoder_diff < MIN_ENCODER_DIFF:
+                self.current_state.current_spool[0].set_led_error(self.current_state.current_spool[1], 1)               
                 self._pause_printer_message("Printer paused because the loading speed was too low")
-                self.current_state.current_spool[0].set_led_error(self.current_state.current_spool[1], 1)
                 self.stop_monitors()
                 return self.printer.get_reactor().NEVER
         return eventtime + 1.0
@@ -343,6 +356,7 @@ class OAMSManager:
         reactor = self.printer.get_reactor()
         self.monitor_timers.append(reactor.register_timer(self._monitor_unload_speed, reactor.NOW))
         self.monitor_timers.append(reactor.register_timer(self._monitor_load_speed, reactor.NOW))
+        self.monitor_timers.append(reactor.register_timer(self._monitor_spool, reactor.NOW))
         logging.info("OAMS: Monitors started")
     
     def stop_monitors(self):

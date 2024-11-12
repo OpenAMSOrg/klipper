@@ -15,10 +15,14 @@ OAMS_STATUS_REVERSE_FOLLOWING = 3
 OAMS_STATUS_COASTING = 4
 OAMS_STATUS_STOPPED = 5
 OAMS_STATUS_CALIBRATING = 6
+OAMS_STATUS_ERROR = 7
 
 OAMS_OP_CODE_SUCCESS = 0
 OAMS_OP_CODE_ERROR_UNSPECIFIED = 1
 OAMS_OP_CODE_ERROR_BUSY = 2
+OAMS_OP_CODE_SPOOL_ALREADY_IN_BAY  = 3
+OAMS_OP_CODE_NO_SPOOL_IN_BAY = 4
+OAMS_OP_CODE_ERROR_KLIPPER_CALL  = 5
 
 
 class OAMS:
@@ -150,7 +154,6 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
                 cq=cmd_queue,
             )
             
-            self.current_spool = self.determine_current_spool()
             self.clear_errors()
             
         except Exception as e:
@@ -159,6 +162,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     def clear_errors(self):
         for i in range(4):
             self.set_led_error(i, 0)
+        self.current_spool = self.determine_current_spool()
+        self.determine_current_spool()
             
     def set_led_error(self, idx, value):
         logging.info("Setting LED %d to %d", idx, value)
@@ -368,6 +373,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         if self.action_status_code == OAMS_OP_CODE_SUCCESS:
             self.current_spool = spool_idx
             return True, "Spool loaded successfully"
+        elif self.action_status_code == OAMS_OP_CODE_ERROR_KLIPPER_CALL:
+            return False, "Spool loading stopped by klipper monitor"
         elif self.action_status_code == OAMS_OP_CODE_ERROR_BUSY:
             return False, "OAMS is busy"
         else:
@@ -391,7 +398,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         else:
             gcmd.error(message)
             
-    def unload_spool(self, spool_idx):
+    def unload_spool(self):
         self.action_status = OAMS_STATUS_UNLOADING
         self.oams_unload_spool_cmd.send()
         while self.action_status is not None:
@@ -399,6 +406,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         if self.action_status_code == OAMS_OP_CODE_SUCCESS:
             self.current_spool = None
             return True, "Spool unloaded successfully"
+        elif self.action_status_code == OAMS_OP_CODE_ERROR_KLIPPER_CALL:
+            return False, "Spool unloading stopped by klipper monitor"
         elif self.action_status_code == OAMS_OP_CODE_ERROR_BUSY:
             return False, "OAMS is busy"
         else:
@@ -407,17 +416,11 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     cmd_OAMS_UNLOAD_SPOOL_help = "Unload a spool of filament"
 
     def cmd_OAMS_UNLOAD_SPOOL(self, gcmd):
-        self.action_status = OAMS_STATUS_UNLOADING
-        self.oams_unload_spool_cmd.send()
-        while self.action_status is not None:
-            self.reactor.pause(self.reactor.monotonic() + 0.1)
-        if self.action_status_code == OAMS_OP_CODE_SUCCESS:
-            gcmd.respond_info("Spool unloaded successfully")
-            self.current_spool = None
-        elif self.action_status_code == OAMS_OP_CODE_ERROR_BUSY:
-            gcmd.error("OAMS is busy")
+        success, message = self.unload_spool()
+        if success:
+            gcmd.respond_info(message)
         else:
-            gcmd.error("Unknown error from OAMS")
+            gcmd.error(message)
 
     def set_oams_follower(self, enable, direction):
         self.oams_follower_cmd.send([enable, direction])
@@ -469,6 +472,12 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             self.action_status = None
             self.action_status_code = params["code"]
             self.action_status_value = params["value"]
+        elif params["action"] == OAMS_STATUS_ERROR:
+            self.action_status = None
+            self.action_status_code = params["code"]
+        elif params["code"] == OAMS_OP_CODE_ERROR_KLIPPER_CALL:
+            self.action_status = None
+            self.action_status_code = params["code"]
         else:
             logging.error(
                 "Spurious response from AMS with code %d and action %d",
